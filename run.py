@@ -6,7 +6,7 @@
   - 같은 그룹 = 완전 동일한 색
 """
 import requests, json, time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
 RESV_URL = "https://yeyak.hscity.go.kr/stadiumDetail.do?stadiumIdx="
@@ -41,7 +41,8 @@ def main():
     with open("stadiums.json", encoding="utf-8") as f:
         stadiums = json.load(f)
 
-    now = datetime.now()
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
     y, m = now.year, now.month
     months = [(y, m)]
     nm, ny = m+1, y
