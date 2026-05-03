@@ -6,6 +6,7 @@
   - 같은 그룹 = 완전 동일한 색
 """
 import requests, json, time, csv, io, re
+from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
@@ -42,52 +43,103 @@ JUKMI_RESV  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/htmlview"
 
 def fetch_jukmi(year, month):
     """
-    구글 시트 CSV → 죽미 빈자리 추출
-    구조: 날짜행(col 2,4,6,8,10,12,14에 일자)
-          헤더행(col 1 = 시간 "06-08")
-          데이터행(col 1-14 = 예약자명, 빈셀 = 빈자리)
-          날짜 col X → Court1=data[X-1], Court2=data[X]
+    구글 시트 HTML 파싱 → 죽미 빈자리 추출
+    - HTML export로 배경색 감지
+    - 회색 셀 = 대관불가 → 제외
+    - 빈 흰색 셀 = 빈자리
     """
-    import calendar
-    # 탭 이름으로 직접 지정 (예: "26년 5월") → 월 바뀌어도 자동 대응
     from urllib.parse import quote
+    import calendar
+
     sheet_name = f"{year - 2000}년 {month}월"
     url = (f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}"
-           f"/gviz/tq?tqx=out:csv&sheet={quote(sheet_name)}")
+           f"/gviz/tq?tqx=out:html&sheet={quote(sheet_name)}")
 
     try:
         res = requests.get(url, timeout=15,
-                           headers={"User-Agent":"Mozilla/5.0"})
-        # 탭 없으면 (다음달 20일 이전) → 조용히 빈 결과 반환
-        if res.status_code != 200 or len(res.text.strip()) < 10:
+                           headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code != 200 or len(res.text.strip()) < 100:
             return []
-        res.raise_for_status()
         res.encoding = "utf-8"
-        rows = list(csv.reader(io.StringIO(res.text)))
     except Exception as e:
         print(f"[X] 죽미 시트 로드 실패: {e}")
         return []
 
+    soup = BeautifulSoup(res.text, "html.parser")
+    table = soup.find("table")
+    if not table:
+        return []
+
+    # ── 배경색 추출 함수 ────────────────────────────────────
+    def get_bg(tag):
+        style = tag.get("style", "")
+        m = re.search(r"background-color:\s*([^;]+)", style)
+        return m.group(1).strip().lower() if m else ""
+
+    def is_grey(color):
+        """회색(대관불가) 판별: R≈G≈B이고 너무 밝지 않은 경우"""
+        if not color or color in ("white", "#ffffff", "transparent", ""):
+            return False
+        if color.startswith("#") and len(color) == 7:
+            try:
+                r = int(color[1:3], 16)
+                g = int(color[3:5], 16)
+                b = int(color[5:7], 16)
+                diff = max(abs(r - g), abs(g - b), abs(r - b))
+                brightness = (r + g + b) / 3
+                return diff < 40 and 30 < brightness < 215
+            except ValueError:
+                pass
+        return False
+
+    # ── 2D 그리드 구성 (rowspan/colspan 처리) ───────────────
+    grid = {}  # {(row, col): (text, is_unavailable)}
+
+    for ri, tr in enumerate(table.find_all("tr")):
+        ci = 0
+        for cell in tr.find_all(["td", "th"]):
+            while (ri, ci) in grid:
+                ci += 1
+            text  = cell.get_text(strip=True)
+            grey  = is_grey(get_bg(cell))
+            rspan = int(cell.get("rowspan", 1))
+            cspan = int(cell.get("colspan", 1))
+            for dr in range(rspan):
+                for dc in range(cspan):
+                    grid[(ri + dr, ci + dc)] = (text, grey)
+            ci += cspan
+
+    if not grid:
+        return []
+
+    max_r = max(r for r, c in grid) + 1
+    max_c = max(c for r, c in grid) + 1
+    rows  = [
+        [grid.get((ri, ci), ("", False)) for ci in range(max_c)]
+        for ri in range(max_r)
+    ]
+
+    # ── 날짜/시간/데이터 행 파싱 ────────────────────────────
     max_day  = calendar.monthrange(year, month)[1]
     TIME_PAT = re.compile(r"^(\d{2})-(\d{2})$")
     DAY_COLS = [2, 4, 6, 8, 10, 12, 14]
 
-    # 날짜행마다 {col_idx: day_num} 저장
-    col_day  = {}   # 현재 주의 {col_idx: day_num}
-    cur_time = None
+    col_day   = {}
+    cur_time  = None
     wait_data = False
-    slots    = []
+    slots     = []
 
     for row in rows:
         if len(row) < 3:
             wait_data = False
             continue
 
-        # ── 날짜행 감지 ──────────────────────────────────────────
+        # 날짜행 감지
         tmp = {}
         for ci in DAY_COLS:
             if ci >= len(row): continue
-            m = re.match(r"^(\d{1,2})", row[ci].strip())
+            text, _ = row[ci]
+            m = re.match(r"^(\d{1,2})", text)
             if m:
                 d = int(m.group(1))
                 if 1 <= d <= max_day:
@@ -98,27 +150,36 @@ def fetch_jukmi(year, month):
             wait_data = False
             continue
 
-        # ── 헤더행 감지 ──────────────────────────────────────────
-        c1 = row[1].strip() if len(row) > 1 else ""
-        mt = TIME_PAT.match(c1)
-        if mt and col_day:
-            cur_time  = (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
-            wait_data = True
-            continue
+        # 헤더행 감지 (col 1 = 시간)
+        if len(row) > 1:
+            c1_text, _ = row[1]
+            mt = TIME_PAT.match(c1_text)
+            if mt and col_day:
+                cur_time  = (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
+                wait_data = True
+                continue
 
-        # ── 데이터행 처리 ─────────────────────────────────────────
+        # 데이터행 처리
         if wait_data and cur_time and col_day:
             begin, end = cur_time
             for ci, day in col_day.items():
                 try:
                     ds = f"{year}-{month:02d}-{day:02d}"
-                    v1 = row[ci - 1].strip() if ci - 1 < len(row) else ""
-                    v2 = row[ci].strip()     if ci     < len(row) else ""
-                    # Court1 또는 Court2 중 하나라도 비어있으면 빈자리
-                    if v1 == "" or v2 == "":
-                        if not any(s["date"]==ds and s["begin"]==begin
+                    v1_text, v1_grey = row[ci - 1] if ci - 1 < len(row) else ("", False)
+                    v2_text, v2_grey = row[ci]     if ci     < len(row) else ("", False)
+
+                    # 둘 다 회색이면 대관불가
+                    if v1_grey and v2_grey:
+                        continue
+
+                    # 회색 아니고 비어있는 코트가 하나라도 있으면 빈자리
+                    v1_ok = not v1_grey and v1_text.strip() == ""
+                    v2_ok = not v2_grey and v2_text.strip() == ""
+
+                    if v1_ok or v2_ok:
+                        if not any(s["date"] == ds and s["begin"] == begin
                                    for s in slots):
-                            slots.append({"date":ds,"begin":begin,"end":end})
+                            slots.append({"date": ds, "begin": begin, "end": end})
                 except IndexError:
                     pass
             wait_data = False
@@ -400,12 +461,12 @@ function slotColor(c){ return groupColor(c.group||c.name); }
 
 function shortNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕',여울공원:'여울',돌모루:'돌모',죽미:'죽미'};
+  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미:'죽미'};
   return (m[c.group]||c.group)+n;
 }
 function mobileNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미:'죽'};
+  const m={금반저류지:'금반',왕배산:'왕배',여울공원:'여울',돌모루:'돌모루',죽미:'죽미'};
   return (m[c.group]||c.group)+n;
 }
 
