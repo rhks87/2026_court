@@ -5,7 +5,7 @@
   - 코트 필터 버튼 배경색 꽉 채우기
   - 같은 그룹 = 완전 동일한 색
 """
-import requests, json, time
+import requests, json, time, csv, io, re
 from datetime import datetime, timezone, timedelta
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
@@ -37,6 +37,95 @@ def extract_empty(resp):
             for s in resp.get("useCntList", [])
             if s.get("applyStatusCd") is None]
 
+JUKMI_SHEET = "1Hg_MniS8eEc-SADH-FKqZQK-AWaogLXD"
+JUKMI_RESV  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/htmlview"
+
+def fetch_jukmi(year, month):
+    """
+    구글 시트 CSV → 죽미 빈자리 추출
+    구조: 날짜행(col 2,4,6,8,10,12,14에 일자)
+          헤더행(col 1 = 시간 "06-08")
+          데이터행(col 1-14 = 예약자명, 빈셀 = 빈자리)
+          날짜 col X → Court1=data[X-1], Court2=data[X]
+    """
+    import calendar
+    # 탭 이름으로 직접 지정 (예: "26년 5월") → 월 바뀌어도 자동 대응
+    from urllib.parse import quote
+    sheet_name = f"{year - 2000}년 {month}월"
+    url = (f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}"
+           f"/gviz/tq?tqx=out:csv&sheet={quote(sheet_name)}")
+
+    try:
+        res = requests.get(url, timeout=15,
+                           headers={"User-Agent":"Mozilla/5.0"})
+        # 탭 없으면 (다음달 20일 이전) → 조용히 빈 결과 반환
+        if res.status_code != 200 or len(res.text.strip()) < 10:
+            return []
+        res.raise_for_status()
+        res.encoding = "utf-8"
+        rows = list(csv.reader(io.StringIO(res.text)))
+    except Exception as e:
+        print(f"[X] 죽미 시트 로드 실패: {e}")
+        return []
+
+    max_day  = calendar.monthrange(year, month)[1]
+    TIME_PAT = re.compile(r"^(\d{2})-(\d{2})$")
+    DAY_COLS = [2, 4, 6, 8, 10, 12, 14]
+
+    # 날짜행마다 {col_idx: day_num} 저장
+    col_day  = {}   # 현재 주의 {col_idx: day_num}
+    cur_time = None
+    wait_data = False
+    slots    = []
+
+    for row in rows:
+        if len(row) < 3:
+            wait_data = False
+            continue
+
+        # ── 날짜행 감지 ──────────────────────────────────────────
+        tmp = {}
+        for ci in DAY_COLS:
+            if ci >= len(row): continue
+            m = re.match(r"^(\d{1,2})", row[ci].strip())
+            if m:
+                d = int(m.group(1))
+                if 1 <= d <= max_day:
+                    tmp[ci] = d
+        if len(tmp) >= 2:
+            col_day   = tmp
+            cur_time  = None
+            wait_data = False
+            continue
+
+        # ── 헤더행 감지 ──────────────────────────────────────────
+        c1 = row[1].strip() if len(row) > 1 else ""
+        mt = TIME_PAT.match(c1)
+        if mt and col_day:
+            cur_time  = (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
+            wait_data = True
+            continue
+
+        # ── 데이터행 처리 ─────────────────────────────────────────
+        if wait_data and cur_time and col_day:
+            begin, end = cur_time
+            for ci, day in col_day.items():
+                try:
+                    ds = f"{year}-{month:02d}-{day:02d}"
+                    v1 = row[ci - 1].strip() if ci - 1 < len(row) else ""
+                    v2 = row[ci].strip()     if ci     < len(row) else ""
+                    # Court1 또는 Court2 중 하나라도 비어있으면 빈자리
+                    if v1 == "" or v2 == "":
+                        if not any(s["date"]==ds and s["begin"]==begin
+                                   for s in slots):
+                            slots.append({"date":ds,"begin":begin,"end":end})
+                except IndexError:
+                    pass
+            wait_data = False
+
+    return slots
+
+
 def main():
     with open("stadiums.json", encoding="utf-8") as f:
         stadiums = json.load(f)
@@ -66,6 +155,17 @@ def main():
             "url": RESV_URL + idx, "empty_slots": slots
         })
         print(f"빈자리 {len(slots):>3d}개")
+
+    # 죽미 실내 테니스장 (구글 시트)
+    print(f"  [죽미] 죽미 실내 테니스장   ", end=" ")
+    jukmi_slots = []
+    for yr, mo in months:
+        jukmi_slots.extend(fetch_jukmi(yr, mo))
+    result.append({
+        "idx": "jukmi", "name": "죽미 실내", "group": "죽미",
+        "url": JUKMI_RESV, "empty_slots": jukmi_slots
+    })
+    print(f"빈자리 {len(jukmi_slots):>3d}개")
 
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
@@ -294,18 +394,18 @@ const COURTS = __DATA__;
 const T0 = new Date(); T0.setHours(0,0,0,0);
 
 /* ★ 그룹 단일 색 (lightness 고정 50%) */
-const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275};
+const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25};
 function groupColor(g){ return `hsl(${GH[g]??0},65%,50%)`; }
 function slotColor(c){ return groupColor(c.group||c.name); }
 
 function shortNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕',여울공원:'여울',돌모루:'돌모'};
+  const m={금반저류지:'금반',왕배산:'왕',여울공원:'여울',돌모루:'돌모',죽미:'죽미'};
   return (m[c.group]||c.group)+n;
 }
 function mobileNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌'};
+  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미:'죽'};
   return (m[c.group]||c.group)+n;
 }
 
