@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install requests
+        run: pip install requests beautifulsoup4
 
       - name: 데이터 수집 + HTML 생성
         run: python run.py
