@@ -257,13 +257,13 @@ def main():
             .replace("__YEAR__",  str(months[0][0]))
             .replace("__MONTH__", str(months[0][1])))
 
-    with open("tennis_court.html", "w", encoding="utf-8") as f:
+    with open("index.html", "w", encoding="utf-8") as f:
         f.write(html)
 
     total = sum(len(c["empty_slots"]) for c in result)
     print("=" * 60)
-    print(f"[OK] tennis_court.html 생성 / 총 빈자리 {total}개")
-    print("→ 더블클릭해서 브라우저에서 열어보세요 🎾")
+    print(f"[OK] index.html 생성 / 총 빈자리 {total}개")
+    print("→ index.html 더블클릭해서 브라우저에서 열어보세요 🎾")
 
 
 HTML = r"""<!DOCTYPE html>
@@ -271,7 +271,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>화성 빈 코트 v0.6</title>
+<title>동탄·죽미 코트 예약현황 🎾</title>
 <style>
 :root{
   --bg:#f0f2f5;--card:#fff;--text:#1a1a2e;--muted:#6b7280;
@@ -429,7 +429,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 
 <div class="hdr">
   <div>
-    <h1>🎾 동탄·죽미 코트 예약현황 <em>v0.7</em> <span class="update-time">__TIME__ 기준</span></h1>
+    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">__TIME__ 기준</span></h1>
   </div>
   <div class="hdr-r">
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
