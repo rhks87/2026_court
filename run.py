@@ -6,7 +6,6 @@
   - 같은 그룹 = 완전 동일한 색
 """
 import requests, json, time, csv, io, re
-from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
@@ -40,105 +39,93 @@ def extract_empty(resp):
 
 JUKMI_SHEET = "1Hg_MniS8eEc-SADH-FKqZQK-AWaogLXD"
 JUKMI_RESV  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/htmlview"
+JUKMI_XLSX  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/export?format=xlsx"
 
 def fetch_jukmi(year, month):
     """
-    구글 시트 HTML 파싱 → 죽미 빈자리 추출
-    - HTML export로 배경색 감지
+    구글 시트 XLSX 파싱 → 죽미 빈자리 추출
+    - openpyxl로 배경색 감지
     - 회색 셀 = 대관불가 → 제외
     - 빈 흰색 셀 = 빈자리
     """
-    from urllib.parse import quote
-    import calendar
+    import calendar, io
+    from openpyxl import load_workbook
+    from openpyxl.cell.cell import MergedCell
 
-    sheet_name = f"{year - 2000}년 {month}월"
-    url = (f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}"
-           f"/gviz/tq?tqx=out:html&sheet={quote(sheet_name)}")
-
+    # xlsx 다운로드
     try:
-        res = requests.get(url, timeout=15,
+        res = requests.get(JUKMI_XLSX, timeout=30,
                            headers={"User-Agent": "Mozilla/5.0"})
-        if res.status_code != 200 or len(res.text.strip()) < 100:
+        if res.status_code != 200:
             return []
-        res.encoding = "utf-8"
+        wb = load_workbook(io.BytesIO(res.content), data_only=True)
     except Exception as e:
-        print(f"[X] 죽미 시트 로드 실패: {e}")
+        print(f"[X] 죽미 xlsx 로드 실패: {e}")
         return []
 
-    soup = BeautifulSoup(res.text, "html.parser")
-    table = soup.find("table")
-    if not table:
+    # 시트 이름으로 찾기 (예: "26년 5월")
+    sheet_name = f"{year - 2000}년 {month}월"
+    if sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    else:
+        # 탭 아직 없음 (20일 이전) → 빈 결과
         return []
 
-    # ── 배경색 추출 함수 ────────────────────────────────────
-    def get_bg(tag):
-        style = tag.get("style", "")
-        m = re.search(r"background-color:\s*([^;]+)", style)
-        return m.group(1).strip().lower() if m else ""
+    # 머지 셀 마스터 맵 구성
+    merge_master = {}
+    for rng in ws.merged_cells.ranges:
+        for r in range(rng.min_row, rng.max_row + 1):
+            for c in range(rng.min_col, rng.max_col + 1):
+                merge_master[(r, c)] = (rng.min_row, rng.min_col)
 
-    def is_grey(color):
-        """회색(대관불가) 판별: R≈G≈B이고 너무 밝지 않은 경우"""
-        if not color or color in ("white", "#ffffff", "transparent", ""):
+    def cell_info(r, c):
+        """셀의 (텍스트, 회색여부) 반환"""
+        master = merge_master.get((r, c), (r, c))
+        cell = ws.cell(row=master[0], column=master[1])
+        val = str(cell.value).strip() if cell.value is not None else ""
+        grey = _is_grey(cell)
+        return val, grey
+
+    def _is_grey(cell):
+        if isinstance(cell, MergedCell):
             return False
-        if color.startswith("#") and len(color) == 7:
-            try:
-                r = int(color[1:3], 16)
-                g = int(color[3:5], 16)
-                b = int(color[5:7], 16)
-                diff = max(abs(r - g), abs(g - b), abs(r - b))
-                brightness = (r + g + b) / 3
-                return diff < 40 and 30 < brightness < 215
-            except ValueError:
-                pass
+        try:
+            fill = cell.fill
+            if not fill or fill.fill_type in (None, "none"):
+                return False
+            fg = fill.fgColor
+            if fg.type == "rgb":
+                rgb = fg.rgb  # "FFRRGGBB"
+                if len(rgb) == 8:
+                    r = int(rgb[2:4], 16)
+                    g = int(rgb[4:6], 16)
+                    b = int(rgb[6:8], 16)
+                    diff = max(abs(r - g), abs(g - b), abs(r - b))
+                    bright = (r + g + b) / 3
+                    # 회색: R≈G≈B, 너무 밝지도 어둡지도 않음
+                    return diff < 45 and 30 < bright < 215
+        except Exception:
+            pass
         return False
 
-    # ── 2D 그리드 구성 (rowspan/colspan 처리) ───────────────
-    grid = {}  # {(row, col): (text, is_unavailable)}
-
-    for ri, tr in enumerate(table.find_all("tr")):
-        ci = 0
-        for cell in tr.find_all(["td", "th"]):
-            while (ri, ci) in grid:
-                ci += 1
-            text  = cell.get_text(strip=True)
-            grey  = is_grey(get_bg(cell))
-            rspan = int(cell.get("rowspan", 1))
-            cspan = int(cell.get("colspan", 1))
-            for dr in range(rspan):
-                for dc in range(cspan):
-                    grid[(ri + dr, ci + dc)] = (text, grey)
-            ci += cspan
-
-    if not grid:
-        return []
-
-    max_r = max(r for r, c in grid) + 1
-    max_c = max(c for r, c in grid) + 1
-    rows  = [
-        [grid.get((ri, ci), ("", False)) for ci in range(max_c)]
-        for ri in range(max_r)
-    ]
-
-    # ── 날짜/시간/데이터 행 파싱 ────────────────────────────
+    # 날짜/시간/데이터행 파싱
     max_day  = calendar.monthrange(year, month)[1]
     TIME_PAT = re.compile(r"^(\d{2})-(\d{2})$")
-    DAY_COLS = [2, 4, 6, 8, 10, 12, 14]
+    DAY_COLS = [3, 5, 7, 9, 11, 13, 15]  # openpyxl은 1-indexed
 
     col_day   = {}
     cur_time  = None
     wait_data = False
     slots     = []
+    max_row   = ws.max_row
 
-    for row in rows:
-        if len(row) < 3:
-            wait_data = False
-            continue
+    for ri in range(1, max_row + 1):
+        row_len = ws.max_column
 
-        # 날짜행 감지
+        # ── 날짜행 감지 ──────────────────────────────────────────
         tmp = {}
         for ci in DAY_COLS:
-            if ci >= len(row): continue
-            text, _ = row[ci]
+            text, _ = cell_info(ri, ci)
             m = re.match(r"^(\d{1,2})", text)
             if m:
                 d = int(m.group(1))
@@ -150,38 +137,35 @@ def fetch_jukmi(year, month):
             wait_data = False
             continue
 
-        # 헤더행 감지 (col 1 = 시간)
-        if len(row) > 1:
-            c1_text, _ = row[1]
-            mt = TIME_PAT.match(c1_text)
-            if mt and col_day:
-                cur_time  = (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
-                wait_data = True
-                continue
+        # ── 헤더행 감지 (col 2 = 시간, openpyxl 1-indexed) ──────
+        c2_text, _ = cell_info(ri, 2)
+        mt = TIME_PAT.match(c2_text)
+        if mt and col_day:
+            cur_time  = (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
+            wait_data = True
+            continue
 
-        # 데이터행 처리
+        # ── 데이터행 처리 ─────────────────────────────────────────
         if wait_data and cur_time and col_day:
             begin, end = cur_time
             for ci, day in col_day.items():
-                try:
-                    ds = f"{year}-{month:02d}-{day:02d}"
-                    v1_text, v1_grey = row[ci - 1] if ci - 1 < len(row) else ("", False)
-                    v2_text, v2_grey = row[ci]     if ci     < len(row) else ("", False)
+                ds = f"{year}-{month:02d}-{day:02d}"
+                # ci = date col, ci-1 = Court1, ci = Court2
+                v1_text, v1_grey = cell_info(ri, ci - 1)
+                v2_text, v2_grey = cell_info(ri, ci)
 
-                    # 둘 다 회색이면 대관불가
-                    if v1_grey and v2_grey:
-                        continue
+                # 둘 다 회색이면 대관불가
+                if v1_grey and v2_grey:
+                    continue
 
-                    # 회색 아니고 비어있는 코트가 하나라도 있으면 빈자리
-                    v1_ok = not v1_grey and v1_text.strip() == ""
-                    v2_ok = not v2_grey and v2_text.strip() == ""
+                # 회색 아니고 비어있으면 빈자리
+                v1_ok = not v1_grey and v1_text == ""
+                v2_ok = not v2_grey and v2_text == ""
 
-                    if v1_ok or v2_ok:
-                        if not any(s["date"] == ds and s["begin"] == begin
-                                   for s in slots):
-                            slots.append({"date": ds, "begin": begin, "end": end})
-                except IndexError:
-                    pass
+                if v1_ok or v2_ok:
+                    if not any(s["date"] == ds and s["begin"] == begin
+                               for s in slots):
+                        slots.append({"date": ds, "begin": begin, "end": end})
             wait_data = False
 
     return slots
