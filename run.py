@@ -263,7 +263,7 @@ def main():
     total = sum(len(c["empty_slots"]) for c in result)
     print("=" * 60)
     print(f"[OK] tennis_court.html 생성 / 총 빈자리 {total}개")
-    print("→ 더블클릭해서 브라우저에서 열어보세요")
+    print("→ 더블클릭해서 브라우저에서 열어보세요 🎾")
 
 
 HTML = r"""<!DOCTYPE html>
@@ -429,7 +429,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 
 <div class="hdr">
   <div>
-    <h1>🎾 화성 빈 코트 <em>v0.7</em> <span class="update-time">__TIME__ 기준</span></h1>
+    <h1>🎾 동탄·죽미 코트 예약현황 <em>v0.7</em> <span class="update-time">__TIME__ 기준</span></h1>
   </div>
   <div class="hdr-r">
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
@@ -439,12 +439,12 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 <div class="filters">
   <!-- 시간 필터 -->
   <div class="fg">
-    <span class="fg-lbl">시간</span>
+    <span class="fg-lbl">⏰ 시간</span>
     <!-- 단축 버튼 -->
-    <button class="btn btn-short f-short" data-s="all"     onclick="setShort('all')">전체</button>
-    <button class="btn btn-short f-short" data-s="morning" onclick="setShort('morning')">오전 (~12)</button>
-    <button class="btn btn-short f-short" data-s="afternoon" onclick="setShort('afternoon')">오후 (12~18)</button>
-    <button class="btn btn-short on f-short" data-s="evening" onclick="setShort('evening')">저녁 (18~) ⭐</button>
+    <button class="btn btn-short f-short" data-s="all"     onclick="setShort('all')">🔍 전체</button>
+    <button class="btn btn-short f-short" data-s="morning" onclick="setShort('morning')">🌅 오전 (~12)</button>
+    <button class="btn btn-short f-short" data-s="afternoon" onclick="setShort('afternoon')">☀️ 오후 (12~18)</button>
+    <button class="btn btn-short on f-short" data-s="evening" onclick="setShort('evening')">🌙 저녁 (18~) ⭐</button>
     <!-- 구분선 -->
     <div class="fg-div"></div>
     <!-- 세부 버튼 -->
@@ -459,7 +459,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   </div>
   <!-- 코트 필터 -->
   <div class="fg" id="gf">
-    <span class="fg-lbl">코트</span>
+    <span class="fg-lbl">📍 코트</span>
   </div>
 </div>
 
@@ -542,7 +542,7 @@ allGroups.forEach(g=>{
 const hint=document.createElement('span');
 hint.className='slot-hint';
 hint.style.cssText='margin-left:auto;font-size:11px;color:var(--muted);white-space:nowrap';
-hint.innerHTML='슬롯 클릭 → 화성시 예약페이지 &nbsp;·&nbsp; +N개 → 펼치기';
+hint.innerHTML='✅ 빈 슬롯 클릭하면 예약페이지로 이동 &nbsp;·&nbsp; 📋 +N개 → 펼치기';
 gf.appendChild(hint);
 
 /* 단축 버튼: 해당 시간 셋 켜기/끄기 */
@@ -628,9 +628,9 @@ function buildSlots(slots,ds){
     ><span class='t'>${s.begin}</span> <span class='sn-f'>${sn}</span><span class='sn-s'>${mobileNm(s.court)}</span></a>`;
   });
   if(!isExp&&rest>0){
-    h+=`<button class="more-btn" onclick="toggleExp('${ds}')">+${rest}개 더 보기 ▼</button>`;
+    h+=`<button class="more-btn" onclick="toggleExp('${ds}')">+${rest}개 더 보기 🔽</button>`;
   } else if(isExp&&slots.length>MAX){
-    h+=`<button class="more-btn" onclick="toggleExp('${ds}')">접기 ▲</button>`;
+    h+=`<button class="more-btn" onclick="toggleExp('${ds}')">접기 🔼</button>`;
   }
   h+='</div>';
   return h;
@@ -638,7 +638,7 @@ function buildSlots(slots,ds){
 
 function render(){
   const {y,m}=MONTHS[cur];
-  document.getElementById('mt').textContent=`${y}년 ${m}월`;
+  document.getElementById('mt').textContent=`📅 ${y}년 ${m}월`;
   document.getElementById('pb').disabled=(cur===0);
   document.getElementById('nb').disabled=(cur===MONTHS.length-1);
 
