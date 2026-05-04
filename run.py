@@ -44,11 +44,16 @@ JUKMI_XLSX  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/export?form
 def fetch_jukmi(year, month):
     """
     구글 시트 XLSX 파싱 → 죽미 빈자리 추출
-    - openpyxl로 배경색 감지
-    - 회색 셀 = 대관불가 → 제외
-    - 빈 흰색 셀 = 빈자리
+
+    핵심 발견사항 (디버깅으로 확인):
+    1. "06-08"~"12-14" 시간 라벨 → Excel이 날짜로 자동변환 (2025-06-08...)
+       → datetime 타입 체크로 월=시작시간, 일=종료시간 복원
+    2. 데이터행 col B가 헤더행과 merge → 헤더로 오인식
+       → RAW 셀만 체크, 헤더 발견 즉시 다음행을 데이터행으로 처리
+    3. 회색(FF999999) = 대관불가, 흰색(FFFFFFFF) + 빈값 = 빈자리
     """
     import calendar, io
+    from datetime import datetime as _dt
     from openpyxl import load_workbook
     from openpyxl.cell.cell import MergedCell
 
@@ -63,15 +68,13 @@ def fetch_jukmi(year, month):
         print(f"[X] 죽미 xlsx 로드 실패: {e}")
         return []
 
-    # 시트 이름으로 찾기 (예: "26년 5월")
+    # 시트 이름으로 찾기 (탭명: "26년 5월")
     sheet_name = f"{year - 2000}년 {month}월"
-    if sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-    else:
-        # 탭 아직 없음 (20일 이전) → 빈 결과
-        return []
+    if sheet_name not in wb.sheetnames:
+        return []  # 탭 아직 없음 (20일 이전)
+    ws = wb[sheet_name]
 
-    # 머지 셀 마스터 맵 구성
+    # 머지 셀 마스터 맵
     merge_master = {}
     for rng in ws.merged_cells.ranges:
         for r in range(rng.min_row, rng.max_row + 1):
@@ -79,14 +82,14 @@ def fetch_jukmi(year, month):
                 merge_master[(r, c)] = (rng.min_row, rng.min_col)
 
     def cell_info(r, c):
-        """셀의 (텍스트, 회색여부) 반환"""
+        """머지 처리 포함 셀 정보 반환"""
         master = merge_master.get((r, c), (r, c))
         cell = ws.cell(row=master[0], column=master[1])
         val = str(cell.value).strip() if cell.value is not None else ""
-        grey = _is_grey(cell)
-        return val, grey
+        return val, _is_grey(cell)
 
     def _is_grey(cell):
+        """회색(대관불가) 판별 — FF999999 기준"""
         if isinstance(cell, MergedCell):
             return False
         try:
@@ -95,78 +98,109 @@ def fetch_jukmi(year, month):
                 return False
             fg = fill.fgColor
             if fg.type == "rgb":
-                rgb = fg.rgb  # "FFRRGGBB"
-                if len(rgb) == 8:
+                rgb = fg.rgb
+                if len(rgb) == 8 and rgb not in ("00000000", "FFFFFFFF"):
                     r = int(rgb[2:4], 16)
                     g = int(rgb[4:6], 16)
                     b = int(rgb[6:8], 16)
-                    diff = max(abs(r - g), abs(g - b), abs(r - b))
-                    bright = (r + g + b) / 3
-                    # 회색: R≈G≈B, 너무 밝지도 어둡지도 않음
-                    return diff < 45 and 30 < bright < 215
+                    diff = max(abs(r-g), abs(g-b), abs(r-b))
+                    bright = (r+g+b) / 3
+                    return diff < 45 and 30 < bright < 245
         except Exception:
             pass
         return False
 
-    # 날짜/시간/데이터행 파싱
-    max_day  = calendar.monthrange(year, month)[1]
+    max_day = calendar.monthrange(year, month)[1]
     TIME_PAT = re.compile(r"^(\d{2})-(\d{2})$")
-    DAY_COLS = [3, 5, 7, 9, 11, 13, 15]  # openpyxl은 1-indexed
+    DAY_COLS = [3, 5, 7, 9, 11, 13, 15]  # openpyxl 1-indexed
 
-    col_day   = {}
-    cur_time  = None
-    wait_data = False
-    slots     = []
-    max_row   = ws.max_row
+    def extract_day(cell):
+        """셀에서 일(day) 숫자 추출"""
+        if isinstance(cell, MergedCell):
+            return None
+        v = cell.value
+        if isinstance(v, _dt):
+            return v.day             # 날짜객체: .day = 일수
+        if isinstance(v, (int, float)):
+            return int(v)            # 1.0 → 1
+        if isinstance(v, str):
+            m = re.match(r"^(\d{1,2})", v)
+            if m:
+                return int(m.group(1))   # "5(공휴일)" → 5
+        return None
 
-    for ri in range(1, max_row + 1):
-        row_len = ws.max_column
+    def detect_time(raw_cell):
+        """
+        col B의 RAW 셀에서 시간 범위 추출
+        - "06-08" 등은 Excel이 날짜로 변환: datetime(2025, 6, 8) → month=6, day=8
+        - "18-20" 등은 변환 불가(월>12)라서 문자열로 저장
+        """
+        if isinstance(raw_cell, MergedCell):
+            return None   # merge된 셀 = 데이터행 → 헤더 아님
+        v = raw_cell.value
+        if isinstance(v, _dt):
+            sh, eh = v.month, v.day   # month=시작시간, day=종료시간
+            if 0 <= sh <= 23 and 0 <= eh <= 23:
+                return (f"{sh:02d}:00", f"{eh:02d}:00")
+        if isinstance(v, str):
+            mt = TIME_PAT.match(v.strip())
+            if mt:
+                return (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
+        return None
 
-        # ── 날짜행 감지 ──────────────────────────────────────────
+    col_day = {}
+    slots = []
+    ri = 1  # 1-indexed
+
+    while ri <= ws.max_row:
+
+        # ── 날짜행 감지 ──────────────────────────────────────
         tmp = {}
         for ci in DAY_COLS:
-            text, _ = cell_info(ri, ci)
-            m = re.match(r"^(\d{1,2})", text)
-            if m:
-                d = int(m.group(1))
-                if 1 <= d <= max_day:
-                    tmp[ci] = d
+            raw = ws.cell(row=ri, column=ci)
+            d = extract_day(raw)
+            if d is not None and 1 <= d <= max_day:
+                tmp[ci] = d
+
         if len(tmp) >= 2:
-            col_day   = tmp
-            cur_time  = None
-            wait_data = False
+            col_day = tmp
+            ri += 1
             continue
 
-        # ── 헤더행 감지 (col 2 = 시간, openpyxl 1-indexed) ──────
-        c2_text, _ = cell_info(ri, 2)
-        mt = TIME_PAT.match(c2_text)
-        if mt and col_day:
-            cur_time  = (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
-            wait_data = True
-            continue
+        # ── 헤더행 감지 (RAW 셀 직접 체크) ──────────────────
+        # merge된 셀이면 None → 데이터행으로 판단, 헤더 아님
+        raw_b = ws.cell(row=ri, column=2)
+        tr = detect_time(raw_b)
 
-        # ── 데이터행 처리 ─────────────────────────────────────────
-        if wait_data and cur_time and col_day:
-            begin, end = cur_time
+        if tr and col_day:
+            begin, end = tr
+            data_ri = ri + 1  # 헤더 바로 다음 행 = 데이터행
+
             for ci, day in col_day.items():
-                ds = f"{year}-{month:02d}-{day:02d}"
-                # ci = date col, ci-1 = Court1, ci = Court2
-                v1_text, v1_grey = cell_info(ri, ci - 1)
-                v2_text, v2_grey = cell_info(ri, ci)
+                try:
+                    ds = f"{year}-{month:02d}-{day:02d}"
+                    v1_text, v1_grey = cell_info(data_ri, ci - 1)
+                    v2_text, v2_grey = cell_info(data_ri, ci)
 
-                # 둘 다 회색이면 대관불가
-                if v1_grey and v2_grey:
-                    continue
+                    # 둘 다 회색이면 대관불가
+                    if v1_grey and v2_grey:
+                        continue
 
-                # 회색 아니고 비어있으면 빈자리
-                v1_ok = not v1_grey and v1_text == ""
-                v2_ok = not v2_grey and v2_text == ""
+                    # 회색 아니고 비어있는 코트가 하나라도 있으면 빈자리
+                    v1_ok = not v1_grey and v1_text == ""
+                    v2_ok = not v2_grey and v2_text == ""
 
-                if v1_ok or v2_ok:
-                    if not any(s["date"] == ds and s["begin"] == begin
-                               for s in slots):
-                        slots.append({"date": ds, "begin": begin, "end": end})
-            wait_data = False
+                    if v1_ok or v2_ok:
+                        if not any(s["date"]==ds and s["begin"]==begin
+                                   for s in slots):
+                            slots.append({"date":ds,"begin":begin,"end":end})
+                except IndexError:
+                    pass
+
+            ri += 2  # 헤더 + 데이터 동시 skip
+            continue
+
+        ri += 1
 
     return slots
 
