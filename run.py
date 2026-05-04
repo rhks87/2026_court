@@ -179,8 +179,8 @@ def fetch_jukmi(year, month):
             for ci, day in col_day.items():
                 try:
                     ds = f"{year}-{month:02d}-{day:02d}"
-                    v1_text, v1_grey = cell_info(data_ri, ci - 1)
-                    v2_text, v2_grey = cell_info(data_ri, ci)
+                    v1_text, v1_grey = cell_info(data_ri, ci)
+                    v2_text, v2_grey = cell_info(data_ri, ci + 1)
 
                     # 둘 다 회색이면 대관불가
                     if v1_grey and v2_grey:
