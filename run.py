@@ -149,7 +149,7 @@ def fetch_jukmi(year, month):
         return None
 
     col_day = {}
-    slots = []
+    slot_dict = {}  # {(date, begin): end} — 같은 날짜는 마지막 주 블록이 덮어씀
     ri = 1  # 1-indexed
 
     while ri <= ws.max_row:
@@ -191,9 +191,10 @@ def fetch_jukmi(year, month):
                     v2_ok = not v2_grey and v2_text == ""
 
                     if v1_ok or v2_ok:
-                        if not any(s["date"]==ds and s["begin"]==begin
-                                   for s in slots):
-                            slots.append({"date":ds,"begin":begin,"end":end})
+                        slot_dict[(ds, begin)] = end  # 최신 주 블록으로 덮어쓰기
+                    else:
+                        # 해당 날짜가 예약/불가로 확정되면 이전 오판을 제거
+                        slot_dict.pop((ds, begin), None)
                 except IndexError:
                     pass
 
@@ -202,7 +203,10 @@ def fetch_jukmi(year, month):
 
         ri += 1
 
-    return slots
+    # dict → list 변환 (올바른 주 블록 데이터만 남김)
+    slots = [{"date": k[0], "begin": k[1], "end": v}
+             for k, v in slot_dict.items()]
+    return sorted(slots, key=lambda s: (s["date"], s["begin"]))
 
 
 def main():
