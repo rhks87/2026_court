@@ -37,176 +37,62 @@ def extract_empty(resp):
             for s in resp.get("useCntList", [])
             if s.get("applyStatusCd") is None]
 
-JUKMI_SHEET = "1Hg_MniS8eEc-SADH-FKqZQK-AWaogLXD"
-JUKMI_RESV  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/htmlview"
-JUKMI_XLSX  = f"https://docs.google.com/spreadsheets/d/{JUKMI_SHEET}/export?format=xlsx"
+# ===== 죽미 (오산시 테니스협회 신 시스템) =====
+JUKMI_API  = "https://ost.moklab.kr/api/reservations/slots"
+JUKMI_RESV = "https://ost.moklab.kr/reservation"
 
 def fetch_jukmi(year, month):
     """
-    구글 시트 XLSX 파싱 → 죽미 빈자리 추출
-
-    핵심 발견사항 (디버깅으로 확인):
-    1. "06-08"~"12-14" 시간 라벨 → Excel이 날짜로 자동변환 (2025-06-08...)
-       → datetime 타입 체크로 월=시작시간, 일=종료시간 복원
-    2. 데이터행 col B가 헤더행과 merge → 헤더로 오인식
-       → RAW 셀만 체크, 헤더 발견 즉시 다음행을 데이터행으로 처리
-    3. 회색(FF999999) = 대관불가, 흰색(FFFFFFFF) + 빈값 = 빈자리
+    오산시 테니스협회 신규 API → 죽미 빈자리 추출
+    GET /api/reservations/slots?date=YYYY-MM-DD
+    statusCode == "OPEN" 이면 빈자리
     """
-    import calendar, io
+    import calendar
     from datetime import datetime as _dt
-    from openpyxl import load_workbook
-    from openpyxl.cell.cell import MergedCell
-
-    # xlsx 다운로드
-    try:
-        res = requests.get(JUKMI_XLSX, timeout=30,
-                           headers={"User-Agent": "Mozilla/5.0"})
-        if res.status_code != 200:
-            return []
-        wb = load_workbook(io.BytesIO(res.content), data_only=True)
-    except Exception as e:
-        print(f"[X] 죽미 xlsx 로드 실패: {e}")
-        return []
-
-    # 시트 이름으로 찾기 (탭명: "26년 5월")
-    sheet_name = f"{year - 2000}년 {month}월"
-    if sheet_name not in wb.sheetnames:
-        return []  # 탭 아직 없음 (20일 이전)
-    ws = wb[sheet_name]
-
-    # 머지 셀 마스터 맵
-    merge_master = {}
-    for rng in ws.merged_cells.ranges:
-        for r in range(rng.min_row, rng.max_row + 1):
-            for c in range(rng.min_col, rng.max_col + 1):
-                merge_master[(r, c)] = (rng.min_row, rng.min_col)
-
-    def cell_info(r, c):
-        """머지 처리 포함 셀 정보 반환"""
-        master = merge_master.get((r, c), (r, c))
-        cell = ws.cell(row=master[0], column=master[1])
-        val = str(cell.value).strip() if cell.value is not None else ""
-        return val, _is_grey(cell)
-
-    def _is_grey(cell):
-        """회색(대관불가) 판별 — FF999999 기준"""
-        if isinstance(cell, MergedCell):
-            return False
-        try:
-            fill = cell.fill
-            if not fill or fill.fill_type in (None, "none"):
-                return False
-            fg = fill.fgColor
-            if fg.type == "rgb":
-                rgb = fg.rgb
-                if len(rgb) == 8 and rgb not in ("00000000", "FFFFFFFF"):
-                    r = int(rgb[2:4], 16)
-                    g = int(rgb[4:6], 16)
-                    b = int(rgb[6:8], 16)
-                    diff = max(abs(r-g), abs(g-b), abs(r-b))
-                    bright = (r+g+b) / 3
-                    return diff < 45 and 30 < bright < 245
-        except Exception:
-            pass
-        return False
 
     max_day = calendar.monthrange(year, month)[1]
-    TIME_PAT = re.compile(r"^(\d{2})-(\d{2})$")
-    DAY_COLS = [3, 5, 7, 9, 11, 13, 15]  # openpyxl 1-indexed
+    slot_dict = {}  # {(date, begin): end}
 
-    def extract_day(cell):
-        """셀에서 일(day) 숫자 추출"""
-        if isinstance(cell, MergedCell):
-            return None
-        v = cell.value
-        if isinstance(v, _dt):
-            return v.day             # 날짜객체: .day = 일수
-        if isinstance(v, (int, float)):
-            return int(v)            # 1.0 → 1
-        if isinstance(v, str):
-            m = re.match(r"^(\d{1,2})", v)
-            if m:
-                return int(m.group(1))   # "5(공휴일)" → 5
-        return None
+    today = _dt.now().date()
 
-    def detect_time(raw_cell):
-        """
-        col B의 RAW 셀에서 시간 범위 추출
-        - "06-08" 등은 Excel이 날짜로 변환: datetime(2025, 6, 8) → month=6, day=8
-        - "18-20" 등은 변환 불가(월>12)라서 문자열로 저장
-        """
-        if isinstance(raw_cell, MergedCell):
-            return None   # merge된 셀 = 데이터행 → 헤더 아님
-        v = raw_cell.value
-        if isinstance(v, _dt):
-            sh, eh = v.month, v.day   # month=시작시간, day=종료시간
-            if 0 <= sh <= 23 and 0 <= eh <= 23:
-                return (f"{sh:02d}:00", f"{eh:02d}:00")
-        if isinstance(v, str):
-            mt = TIME_PAT.match(v.strip())
-            if mt:
-                return (f"{mt.group(1)}:00", f"{mt.group(2)}:00")
-        return None
-
-    col_day = {}
-    slot_dict = {}  # {(date, begin): end} — 같은 날짜는 마지막 주 블록이 덮어씀
-    ri = 1  # 1-indexed
-
-    while ri <= ws.max_row:
-
-        # ── 날짜행 감지 ──────────────────────────────────────
-        tmp = {}
-        for ci in DAY_COLS:
-            raw = ws.cell(row=ri, column=ci)
-            d = extract_day(raw)
-            if d is not None and 1 <= d <= max_day:
-                tmp[ci] = d
-
-        if len(tmp) >= 2:
-            col_day = tmp
-            ri += 1
+    for day in range(1, max_day + 1):
+        date_str = f"{year}-{month:02d}-{day:02d}"
+        target = _dt(year, month, day).date()
+        if target < today:
             continue
 
-        # ── 헤더행 감지 (RAW 셀 직접 체크) ──────────────────
-        # merge된 셀이면 None → 데이터행으로 판단, 헤더 아님
-        raw_b = ws.cell(row=ri, column=2)
-        tr = detect_time(raw_b)
-
-        if tr and col_day:
-            begin, end = tr
-            data_ri = ri + 1  # 헤더 바로 다음 행 = 데이터행
-
-            for ci, day in col_day.items():
-                try:
-                    ds = f"{year}-{month:02d}-{day:02d}"
-                    v1_text, v1_grey = cell_info(data_ri, ci)
-                    v2_text, v2_grey = cell_info(data_ri, ci + 1)
-
-                    # 둘 다 회색이면 대관불가
-                    if v1_grey and v2_grey:
-                        continue
-
-                    # 회색 아니고 비어있는 코트가 하나라도 있으면 빈자리
-                    v1_ok = not v1_grey and v1_text == ""
-                    v2_ok = not v2_grey and v2_text == ""
-
-                    if v1_ok or v2_ok:
-                        slot_dict[(ds, begin)] = end  # 최신 주 블록으로 덮어쓰기
-                    else:
-                        # 해당 날짜가 예약/불가로 확정되면 이전 오판을 제거
-                        slot_dict.pop((ds, begin), None)
-                except IndexError:
-                    pass
-
-            ri += 2  # 헤더 + 데이터 동시 skip
+        try:
+            res = requests.get(JUKMI_API,
+                params={"date": date_str},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15)
+            if res.status_code != 200:
+                continue
+            data = res.json()
+        except Exception as e:
+            print(f"[X] 죽미 {date_str}: {e}")
             continue
 
-        ri += 1
+        for slot in data.get("slots", []):
+            if slot.get("statusCode") != "OPEN":
+                continue
+            start = slot.get("startAt", "")
+            end_at = slot.get("endAt", "")
+            try:
+                begin = start.split("T")[1][:5]
+                end   = end_at.split("T")[1][:5]
+            except (IndexError, AttributeError):
+                continue
+            # 1번/2번 중 하나라도 OPEN이면 빈자리
+            key = (date_str, begin)
+            slot_dict[key] = end
 
-    # dict → list 변환 (올바른 주 블록 데이터만 남김)
+        time.sleep(0.15)
+
     slots = [{"date": k[0], "begin": k[1], "end": v}
              for k, v in slot_dict.items()]
     return sorted(slots, key=lambda s: (s["date"], s["begin"]))
+
 
 
 def main():
@@ -291,13 +177,15 @@ body{font-family:"Noto Sans KR",-apple-system,sans-serif;
   min-height:100vh;padding:16px;
   transition:background .25s,color .25s}
 
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;
-  flex-wrap:wrap;gap:10px;margin-bottom:14px}
-.hdr h1{font-size:20px;font-weight:800;letter-spacing:-.5px}
+.hdr{display:flex;justify-content:space-between;align-items:center;
+  flex-wrap:nowrap;gap:8px;margin-bottom:14px}
+.hdr-left{flex:1;min-width:0}
+.hdr h1{font-size:20px;font-weight:800;letter-spacing:-.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hdr h1 em{font-size:11px;font-weight:400;color:var(--muted);
   font-style:normal;margin-left:6px}
 .hdr p{font-size:11px;color:var(--muted);margin-top:3px}
-.hdr-r{display:flex;gap:6px}
+.hdr-r{display:flex;gap:6px;flex-shrink:0}
 .update-time{font-size:11px;font-weight:400;color:var(--muted);margin-left:8px}
 
 /* 공통 버튼 */
@@ -421,6 +309,11 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   .slot-hint{display:none}
   .sn-f{display:none}
   .sn-s{display:inline}
+  /* 모바일 헤더 한 줄 강제 */
+  .hdr h1{font-size:15px}
+  .hdr h1 em{font-size:9px;margin-left:3px}
+  .update-time{font-size:9px;margin-left:5px;display:block;margin-top:2px}
+  .btn.icon{padding:5px 8px;font-size:13px}
 }
 </style>
 </head>
@@ -428,7 +321,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 <div class="tip" id="tip"></div>
 
 <div class="hdr">
-  <div>
+  <div class="hdr-left">
     <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">__TIME__ 기준</span></h1>
   </div>
   <div class="hdr-r">
