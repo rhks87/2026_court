@@ -37,23 +37,23 @@ def extract_empty(resp):
             for s in resp.get("useCntList", [])
             if s.get("applyStatusCd") is None]
 
-# ===== 죽미 (오산시 테니스협회 신 시스템) =====
-JUKMI_API  = "https://ost.moklab.kr/api/reservations/slots"
-JUKMI_RESV = "https://ost.moklab.kr/reservation"
+# ===== 죽미·시립 (오산시 테니스협회 신 시스템) =====
+OSAN_API  = "https://ost.moklab.kr/api/reservations/slots"
+OSAN_RESV = "https://ost.moklab.kr/reservation"
 
-def fetch_jukmi(year, month):
+def fetch_osan(year, month):
     """
-    오산시 테니스협회 신규 API → 죽미 빈자리 추출
-    GET /api/reservations/slots?date=YYYY-MM-DD
-    statusCode == "OPEN" 이면 빈자리
+    오산시 테니스협회 API → 죽미/시립 빈자리 추출
+    반환: {"죽미": [...], "시립": [...]} 형식
     """
     import calendar
     from datetime import datetime as _dt
 
     max_day = calendar.monthrange(year, month)[1]
-    slot_dict = {}  # {(date, begin): end}
-
     today = _dt.now().date()
+
+    # 코트별 빈자리: {그룹명: {코트번호: {(date, begin): end}}}
+    courts_by_group = {"죽미": {}, "시립": {}}
 
     for day in range(1, max_day + 1):
         date_str = f"{year}-{month:02d}-{day:02d}"
@@ -62,7 +62,7 @@ def fetch_jukmi(year, month):
             continue
 
         try:
-            res = requests.get(JUKMI_API,
+            res = requests.get(OSAN_API,
                 params={"date": date_str},
                 headers={"User-Agent": "Mozilla/5.0"},
                 timeout=15)
@@ -70,12 +70,29 @@ def fetch_jukmi(year, month):
                 continue
             data = res.json()
         except Exception as e:
-            print(f"[X] 죽미 {date_str}: {e}")
+            print(f"[X] 오산 {date_str}: {e}")
             continue
 
         for slot in data.get("slots", []):
             if slot.get("statusCode") != "OPEN":
                 continue
+            
+            court_name = slot.get("courtName", "")
+            # 그룹 판별
+            if "죽미" in court_name:
+                group = "죽미"
+            elif "시립" in court_name:
+                group = "시립"
+            else:
+                continue
+
+            # "죽미테니스장 - 1번코트" → "1"
+            import re as _re
+            m = _re.search(r'(\d+)번', court_name)
+            if not m:
+                continue
+            court_num = m.group(1)
+
             start = slot.get("startAt", "")
             end_at = slot.get("endAt", "")
             try:
@@ -83,15 +100,23 @@ def fetch_jukmi(year, month):
                 end   = end_at.split("T")[1][:5]
             except (IndexError, AttributeError):
                 continue
-            # 1번/2번 중 하나라도 OPEN이면 빈자리
-            key = (date_str, begin)
-            slot_dict[key] = end
+
+            if court_num not in courts_by_group[group]:
+                courts_by_group[group][court_num] = {}
+            courts_by_group[group][court_num][(date_str, begin)] = end
 
         time.sleep(0.15)
 
-    slots = [{"date": k[0], "begin": k[1], "end": v}
-             for k, v in slot_dict.items()]
-    return sorted(slots, key=lambda s: (s["date"], s["begin"]))
+    # 결과를 코트별 리스트로 변환
+    result = {"죽미": [], "시립": []}
+    for group, courts in courts_by_group.items():
+        for num in sorted(courts.keys(), key=lambda x: int(x)):
+            slots = [{"date": k[0], "begin": k[1], "end": v}
+                     for k, v in courts[num].items()]
+            slots.sort(key=lambda s: (s["date"], s["begin"]))
+            result[group].append({"num": num, "slots": slots})
+
+    return result
 
 
 
@@ -125,16 +150,34 @@ def main():
         })
         print(f"빈자리 {len(slots):>3d}개")
 
-    # 죽미 실내 테니스장 (구글 시트)
-    print(f"  [죽미] 죽미 실내 테니스장   ", end=" ")
-    jukmi_slots = []
+    # 오산시 테니스협회 (죽미 + 시립)
+    print(f"  [오산] 죽미·시립 통합 API     ", end=" ")
+    osan_by_group = {"죽미": {}, "시립": {}}  # {그룹: {코트번호: {(date,begin):end}}}
     for yr, mo in months:
-        jukmi_slots.extend(fetch_jukmi(yr, mo))
-    result.append({
-        "idx": "jukmi", "name": "죽미 실내", "group": "죽미",
-        "url": JUKMI_RESV, "empty_slots": jukmi_slots
-    })
-    print(f"빈자리 {len(jukmi_slots):>3d}개")
+        month_data = fetch_osan(yr, mo)
+        for group_name, courts in month_data.items():
+            for court in courts:
+                num = court["num"]
+                if num not in osan_by_group[group_name]:
+                    osan_by_group[group_name][num] = {}
+                for s in court["slots"]:
+                    osan_by_group[group_name][num][(s["date"], s["begin"])] = s["end"]
+
+    osan_total = 0
+    for group_name, courts in osan_by_group.items():
+        for num in sorted(courts.keys(), key=lambda x: int(x)):
+            slots = [{"date": k[0], "begin": k[1], "end": v}
+                     for k, v in courts[num].items()]
+            slots.sort(key=lambda s: (s["date"], s["begin"]))
+            result.append({
+                "idx": f"osan_{group_name}_{num}",
+                "name": f"{group_name} {num}번",
+                "group": group_name,
+                "url": OSAN_RESV,
+                "empty_slots": slots,
+            })
+            osan_total += len(slots)
+    print(f"빈자리 {osan_total:>3d}개")
 
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
@@ -370,18 +413,18 @@ const COURTS = __DATA__;
 const T0 = new Date(); T0.setHours(0,0,0,0);
 
 /* ★ 그룹 단일 색 (lightness 고정 50%) */
-const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25};
+const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25, 시립:55};
 function groupColor(g){ return `hsl(${GH[g]??0},65%,50%)`; }
 function slotColor(c){ return groupColor(c.group||c.name); }
 
 function shortNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미:'죽미'};
+  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미:'죽미',시립:'시립'};
   return (m[c.group]||c.group)+n;
 }
 function mobileNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕배',여울공원:'여울',돌모루:'돌모루',죽미:'죽미'};
+  const m={금반저류지:'금반',왕배산:'왕배',여울공원:'여울',돌모루:'돌모루',죽미:'죽미',시립:'시립'};
   return (m[c.group]||c.group)+n;
 }
 
