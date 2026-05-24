@@ -349,6 +349,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   .slot{font-size:10px;padding:3px 4px}
   .dnum{font-size:12px}
   .slots{grid-template-columns:1fr}
+  .slots.exp{grid-template-columns:1fr}  /* 더보기 펼쳐도 1열 유지 */
   .slot-hint{display:none}
   .sn-f{display:none}
   .sn-s{display:inline}
