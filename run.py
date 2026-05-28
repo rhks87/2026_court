@@ -568,11 +568,10 @@ function buildSlots(slots,ds){
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
     const slotId=`sl_${s.court.idx}_${s.begin.replace(':','')}`;
-    h+=`<a class="slot" id="${slotId}" href="${s.court.url}" target="_blank"
+    h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
       onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
-      onclick="return slotClick(event,this,'${tip2.replace(/'/g,"\\'")}','${s.court.url}')"
     ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span></a>`;
   });
   if(!isExp&&rest>0){
