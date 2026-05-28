@@ -333,14 +333,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 }
 .more-btn:hover{background:var(--hover)}
 
-/* 모바일 탭 툴팁 */
-.mobile-tip{
-  grid-column:1/-1;
-  background:#1e293b;color:#fff;font-size:11px;font-weight:600;
-  padding:6px 10px;border-radius:7px;margin-top:2px;
-  display:flex;justify-content:space-between;align-items:center;gap:8px;
-}
-.mt-close{cursor:pointer;font-size:13px;opacity:.7;flex-shrink:0}
+
 
 .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;
   justify-content:center;font-size:12px;color:var(--muted)}
@@ -493,7 +486,7 @@ allGroups.forEach(g=>{
 const hint=document.createElement('span');
 hint.className='slot-hint';
 hint.style.cssText='margin-left:auto;font-size:11px;color:var(--muted);white-space:nowrap';
-hint.innerHTML='✅ 빈 슬롯 클릭하면 예약페이지로 이동 &nbsp;·&nbsp; 📋 +N개 → 펼치기';
+hint.innerHTML='✅ 빈 슬롯 클릭 → 예약페이지 &nbsp;·&nbsp; 📋 +N개 → 펼치기';
 gf.appendChild(hint);
 
 /* 단축 버튼: 해당 시간 셋 켜기/끄기 */
@@ -580,7 +573,7 @@ function buildSlots(slots,ds){
       onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
       onclick="return slotClick(event,this,'${tip2.replace(/'/g,"\\'")}','${s.court.url}')"
-    ><span class='t'><span class='sn-tf'>${s.begin}</span></span> <span class='sn-f'>${sn}</span><span class='sn-s'>${parseInt(hOnly)}시 ${mob}</span></a>`;
+    ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span></a>`;
   });
   if(!isExp&&rest>0){
     h+=`<button class="more-btn" onclick="toggleExp('${ds}')">+${rest}개 더 보기 🔽</button>`;
@@ -644,44 +637,6 @@ document.addEventListener('mousemove',moveTip);
 function moveTip(e){tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY-30)+'px';}
 function hideTip(){tip.style.opacity='0';}
 
-/* 모바일 슬롯 탭 동작: 1탭 = 코트 정보 표시, 2탭 = 예약 페이지 이동 */
-let lastTapped = null;
-let lastTapTime = 0;
-function slotClick(e, el, info, url){
-  const isMobile = window.matchMedia('(max-width:700px)').matches;
-  if(!isMobile) return true; // PC는 그냥 바로 이동
-
-  const now = Date.now();
-  const isDoubleTap = (lastTapped === el && now - lastTapTime < 600);
-  lastTapped = el;
-  lastTapTime = now;
-
-  if(isDoubleTap){
-    // 2탭 → 예약 페이지로 이동
-    window.open(url, '_blank');
-    hideMobileTip();
-    return false;
-  } else {
-    // 1탭 → 코트 정보 툴팁 표시
-    e.preventDefault();
-    showMobileTip(el, info);
-    return false;
-  }
-}
-
-let mobileTip = null;
-function showMobileTip(el, info){
-  hideMobileTip();
-  const div = document.createElement('div');
-  div.className = 'mobile-tip';
-  div.innerHTML = `<span>${info}</span><span class="mt-close" onclick="hideMobileTip()">✕</span>`;
-  el.parentNode.insertBefore(div, el.nextSibling);
-  mobileTip = div;
-  // 2초 후 자동 닫힘
-  setTimeout(hideMobileTip, 3000);
-}
-function hideMobileTip(){
-  if(mobileTip){ mobileTip.remove(); mobileTip = null; }
 }
 function toggleTheme(){
   document.body.dataset.theme=document.body.dataset.theme==='dark'?'light':'dark';}
