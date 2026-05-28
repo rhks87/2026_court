@@ -174,7 +174,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 
 <div class="hdr">
   <div class="hdr-left">
-    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-05-28 10:32 기준</span></h1>
+    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-05-28 10:37 기준</span></h1>
   </div>
   <div class="hdr-r">
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
@@ -370,7 +370,6 @@ function buildSlots(slots,ds){
     const mob=mobileNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
-    const slotId=`sl_${s.court.idx}_${s.begin.replace(':','')}`;
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
       onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
