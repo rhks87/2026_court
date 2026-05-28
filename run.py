@@ -323,6 +323,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 }
 .slot:hover{filter:brightness(1.12);transform:translateY(-1px)}
 .sn-s{display:none}
+.sn-tf{display:inline} /* PC 시간 */
 
 .more-btn{
   grid-column:1/-1;font-size:11px;color:var(--accent);font-weight:700;
@@ -331,6 +332,15 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   background:none;font-family:inherit;transition:background .12s;margin-top:1px;
 }
 .more-btn:hover{background:var(--hover)}
+
+/* 모바일 탭 툴팁 */
+.mobile-tip{
+  grid-column:1/-1;
+  background:#1e293b;color:#fff;font-size:11px;font-weight:600;
+  padding:6px 10px;border-radius:7px;margin-top:2px;
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+}
+.mt-close{cursor:pointer;font-size:13px;opacity:.7;flex-shrink:0}
 
 .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;
   justify-content:center;font-size:12px;color:var(--muted)}
@@ -353,6 +363,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   .slot-hint{display:none}
   .sn-f{display:none}
   .sn-s{display:inline}
+
   /* 모바일 헤더 한 줄 강제 */
   .hdr h1{font-size:15px}
   .hdr h1 em{font-size:9px;margin-left:3px}
@@ -425,8 +436,8 @@ function shortNm(c){
 }
 function mobileNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕배',여울공원:'여울',돌모루:'돌모루',죽미:'죽미',시립:'시립'};
-  return (m[c.group]||c.group)+n;
+  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미:'죽',시립:'시'};
+  return (m[c.group]||c.group)+n+'번';
 }
 
 const HOLI={
@@ -557,12 +568,16 @@ function buildSlots(slots,ds){
   vis.forEach(s=>{
     const col=slotColor(s.court);
     const sn=shortNm(s.court);
+    const mob=mobileNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
-    h+=`<a class="slot" href="${s.court.url}" target="_blank"
+    const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
+    const slotId=`sl_${s.court.idx}_${s.begin.replace(':','')}`;
+    h+=`<a class="slot" id="${slotId}" href="${s.court.url}" target="_blank"
       style="background:${col}"
-      onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}')"
+      onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
-    ><span class='t'>${s.begin}</span> <span class='sn-f'>${sn}</span><span class='sn-s'>${mobileNm(s.court)}</span></a>`;
+      onclick="return slotClick(event,this,'${tip2.replace(/'/g,"\\'")}','${s.court.url}')"
+    ><span class='t'><span class='sn-tf'>${s.begin}</span></span> <span class='sn-f'>${sn}</span><span class='sn-s'>${parseInt(hOnly)}시 ${mob}</span></a>`;
   });
   if(!isExp&&rest>0){
     h+=`<button class="more-btn" onclick="toggleExp('${ds}')">+${rest}개 더 보기 🔽</button>`;
@@ -625,6 +640,46 @@ function showTip(e,txt){tip.textContent=txt;tip.style.opacity='1';moveTip(e);}
 document.addEventListener('mousemove',moveTip);
 function moveTip(e){tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY-30)+'px';}
 function hideTip(){tip.style.opacity='0';}
+
+/* 모바일 슬롯 탭 동작: 1탭 = 코트 정보 표시, 2탭 = 예약 페이지 이동 */
+let lastTapped = null;
+let lastTapTime = 0;
+function slotClick(e, el, info, url){
+  const isMobile = window.matchMedia('(max-width:700px)').matches;
+  if(!isMobile) return true; // PC는 그냥 바로 이동
+
+  const now = Date.now();
+  const isDoubleTap = (lastTapped === el && now - lastTapTime < 600);
+  lastTapped = el;
+  lastTapTime = now;
+
+  if(isDoubleTap){
+    // 2탭 → 예약 페이지로 이동
+    window.open(url, '_blank');
+    hideMobileTip();
+    return false;
+  } else {
+    // 1탭 → 코트 정보 툴팁 표시
+    e.preventDefault();
+    showMobileTip(el, info);
+    return false;
+  }
+}
+
+let mobileTip = null;
+function showMobileTip(el, info){
+  hideMobileTip();
+  const div = document.createElement('div');
+  div.className = 'mobile-tip';
+  div.innerHTML = `<span>${info}</span><span class="mt-close" onclick="hideMobileTip()">✕</span>`;
+  el.parentNode.insertBefore(div, el.nextSibling);
+  mobileTip = div;
+  // 2초 후 자동 닫힘
+  setTimeout(hideMobileTip, 3000);
+}
+function hideMobileTip(){
+  if(mobileTip){ mobileTip.remove(); mobileTip = null; }
+}
 function toggleTheme(){
   document.body.dataset.theme=document.body.dataset.theme==='dark'?'light':'dark';}
 function saveJson(){
