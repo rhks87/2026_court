@@ -567,7 +567,6 @@ function buildSlots(slots,ds){
     const mob=mobileNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
-    const slotId=`sl_${s.court.idx}_${s.begin.replace(':','')}`;
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
       onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
