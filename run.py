@@ -363,6 +363,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   .slot-hint{display:none}
   .sn-f{display:none}
   .sn-s{display:inline}
+  .sn-tf{display:none}  /* 모바일: 전체 시간 숨김, sn-s가 대신 표시 */
 
   /* 모바일 헤더 한 줄 강제 */
   .hdr h1{font-size:15px}
