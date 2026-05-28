@@ -333,13 +333,6 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   background:none;font-family:inherit;transition:background .12s;margin-top:1px;
 }
 .more-btn:hover{background:var(--hover)}
-.mobile-tip{
-  grid-column:1/-1;background:#1e293b;color:#fff;
-  font-size:11px;font-weight:600;padding:6px 10px;
-  border-radius:7px;margin-top:2px;
-  display:flex;justify-content:space-between;align-items:center;gap:8px;
-}
-.mt-x{cursor:pointer;font-size:13px;opacity:.7;flex-shrink:0}
 
 
 
@@ -494,7 +487,7 @@ allGroups.forEach(g=>{
 const hint=document.createElement('span');
 hint.className='slot-hint';
 hint.style.cssText='margin-left:auto;font-size:11px;color:var(--muted);white-space:nowrap';
-hint.innerHTML='PC: 클릭→예약 &nbsp;|&nbsp; 📱 1탭=코트확인 / 2탭=예약이동 &nbsp;·&nbsp; +N개→펼치기';
+hint.innerHTML='✅ 슬롯 클릭 → 예약페이지 이동 &nbsp;·&nbsp; +N개 → 펼치기';
 gf.appendChild(hint);
 
 /* 단축 버튼: 해당 시간 셋 켜기/끄기 */
@@ -579,7 +572,6 @@ function buildSlots(slots,ds){
       style="background:${col}"
       onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
-      onclick="return slotClick(event,this,'${tip2.replace(/'/g,"\\'")}','${s.court.url}')"
     ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span></a>`;
   });
   if(!isExp&&rest>0){
@@ -643,27 +635,6 @@ function showTip(e,txt){tip.textContent=txt;tip.style.opacity='1';moveTip(e);}
 document.addEventListener('mousemove',moveTip);
 function moveTip(e){tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY-30)+'px';}
 function hideTip(){tip.style.opacity='0';}
-/* 모바일: 1탭=코트확인, 2탭=예약이동 */
-let _lastEl=null, _lastT=0;
-function slotClick(e,el,info,url){
-  if(!window.matchMedia('(max-width:700px)').matches) return true;
-  const now=Date.now();
-  const dbl=(_lastEl===el && now-_lastT<600);
-  _lastEl=el; _lastT=now;
-  if(dbl){ window.open(url,'_blank'); _hideMTip(); return false; }
-  e.preventDefault(); _showMTip(el,info); return false;
-}
-let _mtip=null;
-function _showMTip(el,info){
-  _hideMTip();
-  const d=document.createElement('div');
-  d.className='mobile-tip';
-  d.innerHTML=`<span>${info}</span><span class="mt-x" onclick="_hideMTip()">✕</span>`;
-  el.parentNode.insertBefore(d,el.nextSibling);
-  _mtip=d; setTimeout(_hideMTip,3000);
-}
-function _hideMTip(){ if(_mtip){_mtip.remove();_mtip=null;} }
-
 
 function toggleTheme(){
   document.body.dataset.theme=document.body.dataset.theme==='dark'?'light':'dark';}
