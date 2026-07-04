@@ -1,0 +1,33 @@
+name: Tennis Court Updater
+
+on:
+  schedule:
+    - cron: '0,10,20,30,40,50 * * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Python 설정
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: pip install requests openpyxl
+
+      - name: 데이터 수집 + HTML 생성
+        run: python run.py
+
+      - name: 결과 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --staged --quiet || git commit -m "자동 갱신 $(date '+%Y-%m-%d %H:%M')"
+          git push
