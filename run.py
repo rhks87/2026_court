@@ -420,18 +420,18 @@ const COURTS = __DATA__;
 const T0 = new Date(); T0.setHours(0,0,0,0);
 
 /* ★ 그룹 단일 색 (lightness 고정 50%) */
-const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25, 시립:55};
+const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25, 시립:55, 중동:190};
 function groupColor(g){ return `hsl(${GH[g]??0},65%,50%)`; }
 function slotColor(c){ return groupColor(c.group||c.name); }
 
 function shortNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미:'죽미',시립:'시립'};
+  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미:'죽미',시립:'시립',중동:'중동'};
   return (m[c.group]||c.group)+n;
 }
 function mobileNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미:'죽',시립:'시'};
+  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미:'죽',시립:'시',중동:'중'};
   return (m[c.group]||c.group)+n+'번';
 }
 
