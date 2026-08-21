@@ -422,7 +422,7 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 .summary{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
 
 /* 날씨 요약 카드 */
-.weather-wrap{display:flex;gap:8px;margin-bottom:12px;overflow-x:auto}
+.weather-wrap{display:flex;gap:8px;margin-top:12px;overflow-x:auto}
 .wcard{flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
   border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow)}
 .wcard .wd{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px}
@@ -469,8 +469,6 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
   </div>
 </div>
 
-<div class="weather-wrap" id="weatherWrap"></div>
-
 <div class="filters">
   <!-- 시간 필터 -->
   <div class="fg">
@@ -505,6 +503,8 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 </div>
 
 <div class="cal-wrap"><div id="cal"></div></div>
+
+<div class="weather-wrap" id="weatherWrap"></div>
 
 
 <script>
