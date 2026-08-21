@@ -147,12 +147,20 @@ def fetch_weather():
     base_time = f"{base_hour:02d}00"
 
     try:
-        r = requests.get(KMA_URL, params={
-            "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 1000,
-            "dataType": "JSON", "base_date": base_date, "base_time": base_time,
-            "nx": KMA_NX, "ny": KMA_NY,
-        }, timeout=10)
-        r.raise_for_status()
+        for attempt in range(3):
+            try:
+                r = requests.get(KMA_URL, params={
+                    "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 1000,
+                    "dataType": "JSON", "base_date": base_date, "base_time": base_time,
+                    "nx": KMA_NX, "ny": KMA_NY,
+                }, timeout=20)
+                r.raise_for_status()
+                break
+            except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+                if attempt == 2:
+                    raise
+                print(f"  [!] 날씨 API 연결 재시도 {attempt+1}/3...", end=" ")
+                time.sleep(3)
         data = r.json()
         header = data.get("response", {}).get("header", {})
         if header.get("resultCode") != "00":
