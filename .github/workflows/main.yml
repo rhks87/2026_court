@@ -22,6 +22,8 @@ jobs:
         run: pip install requests openpyxl
 
       - name: 데이터 수집 + HTML 생성
+        env:
+          KMA_SERVICE_KEY: ${{ secrets.KMA_SERVICE_KEY }}
         run: python run.py
 
       - name: 결과 커밋
