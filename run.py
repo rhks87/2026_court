@@ -53,7 +53,7 @@ def fetch_osan(year, month):
     today = _dt.now().date()
 
     # 코트별 빈자리: {그룹명: {코트번호: {(date, begin): end}}}
-    courts_by_group = {"죽미": {}, "시립": {}}
+    courts_by_group = {"죽미실내": {}, "죽미실외": {}, "시립": {}}
 
     for day in range(1, max_day + 1):
         date_str = f"{year}-{month:02d}-{day:02d}"
@@ -78,9 +78,9 @@ def fetch_osan(year, month):
                 continue
             
             court_name = slot.get("courtName", "")
-            # 그룹 판별
+            # 그룹 판별 — 죽미는 "실내코트"/"실외코트" 표기로 세부 구분
             if "죽미" in court_name:
-                group = "죽미"
+                group = "죽미실내" if "실내" in court_name else "죽미실외"
             elif "시립" in court_name:
                 group = "시립"
             else:
@@ -108,7 +108,7 @@ def fetch_osan(year, month):
         time.sleep(0.15)
 
     # 결과를 코트별 리스트로 변환
-    result = {"죽미": [], "시립": []}
+    result = {"죽미실내": [], "죽미실외": [], "시립": []}
     for group, courts in courts_by_group.items():
         for num in sorted(courts.keys(), key=lambda x: int(x)):
             slots = [{"date": k[0], "begin": k[1], "end": v}
@@ -224,7 +224,7 @@ def main():
 
     # 오산시 테니스협회 (죽미 + 시립)
     print(f"  [오산] 죽미·시립 통합 API     ", end=" ")
-    osan_by_group = {"죽미": {}, "시립": {}}  # {그룹: {코트번호: {(date,begin):end}}}
+    osan_by_group = {"죽미실내": {}, "죽미실외": {}, "시립": {}}  # {그룹: {코트번호: {(date,begin):end}}}
     for yr, mo in months:
         month_data = fetch_osan(yr, mo)
         for group_name, courts in month_data.items():
@@ -389,6 +389,11 @@ td.today .dnum{background:var(--today-ring);color:#fff;border-radius:50%;
 td.holiday-bg{background:rgba(239,68,68,.07)!important}
 [data-theme=dark] td.holiday-bg{background:rgba(248,113,113,.1)!important}
 
+.rain-badge{position:absolute;top:2px;right:3px;font-size:11px;
+  display:flex;align-items:center;gap:1px;line-height:1}
+.rain-badge .rp{font-size:8px;font-weight:700;color:var(--sat)}
+td{position:relative}
+
 .slots{display:grid;grid-template-columns:1fr 1fr;gap:3px;overflow:hidden}
 .slots.exp{grid-template-columns:1fr 1fr}
 
@@ -541,19 +546,24 @@ function renderWeather(){
   wrap.innerHTML = h;
 }
 
-/* ★ 그룹 단일 색 (lightness 고정 50%) */
-const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25, 시립:55, 중동:190};
+/* 날짜(YYYY-MM-DD) → 날씨 요약 조회 */
+function weatherForDate(ds){
+  const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
+  const key = ds.replace(/-/g, '');
+  return days[key] || null;
+}
+const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미실내:25, 죽미실외:35, 시립:55, 중동:190};
 function groupColor(g){ return `hsl(${GH[g]??0},65%,50%)`; }
 function slotColor(c){ return groupColor(c.group||c.name); }
 
 function shortNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미:'죽미',시립:'시립',중동:'중동'};
+  const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미실내:'죽미(내)',죽미실외:'죽미(외)',시립:'시립',중동:'중동'};
   return (m[c.group]||c.group)+n;
 }
 function mobileNm(c){
   const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미:'죽',시립:'시',중동:'중'};
+  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미실내:'죽내',죽미실외:'죽외',시립:'시',중동:'중'};
   return (m[c.group]||c.group)+n+'번';
 }
 
@@ -737,6 +747,10 @@ function render(){
         let cls=''; if(isPast)cls='past'; if(isToday)cls='today';
         const holi=HOLI[ds]||'';
         html+=`<td class="${cls}${holi?' holiday-bg':''}">`;
+        const wx = weatherForDate(ds);
+        if(wx && wx.pop >= 60){
+          html+=`<div class="rain-badge" title="강수확률 ${wx.pop}%">🌧️<span class="rp">${wx.pop}%</span></div>`;
+        }
         html+=`<div class="dnum ${dc}">${day}</div>`;
         if(holi) html+=`<div class="holi">${holi}</div>`;
         html+=buildSlots(slots,ds);
