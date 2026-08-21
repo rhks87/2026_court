@@ -120,6 +120,70 @@ def fetch_osan(year, month):
 
 
 
+# ===== 날씨 (기상청 단기예보, 동탄 기준) =====
+KMA_SERVICE_KEY = __import__("os").environ.get("KMA_SERVICE_KEY", "")
+KMA_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+KMA_NX, KMA_NY = 62, 119  # 동탄 기준 격자좌표 (최초 실행 결과로 유효성 확인 필요)
+KMA_ANNOUNCE_HOURS = [2, 5, 8, 11, 14, 17, 20, 23]
+
+def fetch_weather():
+    """
+    기상청 단기예보(3일치) 조회 → 날짜별 요약(최저/최고기온, 최대강수확률, 대표하늘상태)으로 가공.
+    실패 시 빈 dict 반환 — 날씨 실패가 코트 정보 갱신을 막지 않도록 함.
+    """
+    if not KMA_SERVICE_KEY:
+        print("  [!] KMA_SERVICE_KEY 미설정 — 날씨 정보 생략")
+        return {}
+
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST) - timedelta(minutes=10)  # 발표 직후 버퍼
+    candidates = [h for h in KMA_ANNOUNCE_HOURS if h <= now.hour]
+    if candidates:
+        base_hour = max(candidates)
+        base_date = now.strftime("%Y%m%d")
+    else:
+        base_hour = 23
+        base_date = (now - timedelta(days=1)).strftime("%Y%m%d")
+    base_time = f"{base_hour:02d}00"
+
+    try:
+        r = requests.get(KMA_URL, params={
+            "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 1000,
+            "dataType": "JSON", "base_date": base_date, "base_time": base_time,
+            "nx": KMA_NX, "ny": KMA_NY,
+        }, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        header = data.get("response", {}).get("header", {})
+        if header.get("resultCode") != "00":
+            print(f"  [!] 날씨 API 오류: {header.get('resultCode')} {header.get('resultMsg')}")
+            return {}
+        items = data["response"]["body"]["items"]["item"]
+    except Exception as e:
+        print(f"  [!] 날씨 조회 실패: {e}")
+        return {}
+
+    by_date = {}
+    for it in items:
+        d, cat, val = it["fcstDate"], it["category"], it["fcstValue"]
+        by_date.setdefault(d, {"tmp": [], "pop": [], "sky": [], "pty": []})
+        if cat == "TMP": by_date[d]["tmp"].append(float(val))
+        elif cat == "POP": by_date[d]["pop"].append(int(val))
+        elif cat == "SKY": by_date[d]["sky"].append(val)
+        elif cat == "PTY": by_date[d]["pty"].append(val)
+
+    summary = {}
+    for d, v in sorted(by_date.items())[:3]:  # 오늘+모레까지 최대 3일
+        summary[d] = {
+            "tmin": round(min(v["tmp"])) if v["tmp"] else None,
+            "tmax": round(max(v["tmp"])) if v["tmp"] else None,
+            "pop":  max(v["pop"]) if v["pop"] else 0,
+            "sky":  max(set(v["sky"]), key=v["sky"].count) if v["sky"] else "1",
+            "pty":  "1" if any(p != "0" for p in v["pty"]) else "0",
+        }
+    return {"base_date": base_date, "base_time": base_time, "days": summary}
+
+
 def main():
     with open("stadiums.json", encoding="utf-8") as f:
         stadiums = json.load(f)
@@ -179,9 +243,15 @@ def main():
             osan_total += len(slots)
     print(f"빈자리 {osan_total:>3d}개")
 
+    # 날씨 (동탄 기준, 실패해도 코트 정보는 정상 생성)
+    print(f"  [날씨] 동탄 단기예보 조회 중...", end=" ")
+    weather = fetch_weather()
+    print(f"{len(weather.get('days', {}))}일치 확보" if weather else "생략")
+
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
             .replace("__DATA__",  json.dumps(result, ensure_ascii=False))
+            .replace("__WEATHER__", json.dumps(weather, ensure_ascii=False))
             .replace("__TIME__",  ts)
             .replace("__YEAR__",  str(months[0][0]))
             .replace("__MONTH__", str(months[0][1])))
@@ -343,6 +413,18 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 
 .summary{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
 
+/* 날씨 요약 카드 */
+.weather-wrap{display:flex;gap:8px;margin-bottom:12px;overflow-x:auto}
+.wcard{flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
+  border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow)}
+.wcard .wd{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px}
+.wcard .wi{font-size:22px;line-height:1}
+.wcard .wt{font-size:13px;font-weight:700;margin-top:4px}
+.wcard .wt .lo{color:var(--muted);font-weight:500}
+.wcard .wp{font-size:11px;margin-top:2px}
+.wcard .wp.high{color:var(--sat);font-weight:700}
+@media(max-width:700px){.wcard{min-width:76px;padding:8px 6px}.wcard .wi{font-size:18px}}
+
 .tip{position:fixed;pointer-events:none;z-index:9999;
   background:#1e293b;color:#fff;font-size:12px;font-weight:500;
   padding:5px 10px;border-radius:7px;white-space:nowrap;
@@ -378,6 +460,8 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
   </div>
 </div>
+
+<div class="weather-wrap" id="weatherWrap"></div>
 
 <div class="filters">
   <!-- 시간 필터 -->
@@ -417,7 +501,37 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 
 <script>
 const COURTS = __DATA__;
+const WEATHER = __WEATHER__;
 const T0 = new Date(); T0.setHours(0,0,0,0);
+
+/* 날씨 요약 카드 렌더 */
+function skyIcon(sky, pty){
+  if(pty && pty !== "0") return "🌧️";
+  if(sky === "1") return "☀️";
+  if(sky === "3") return "⛅";
+  return "☁️";
+}
+function renderWeather(){
+  const wrap = document.getElementById('weatherWrap');
+  if(!wrap) return;
+  const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
+  const keys = Object.keys(days).sort();
+  if(keys.length === 0){ wrap.style.display='none'; return; }
+  const labels = ['오늘','내일','모레'];
+  let h = '';
+  keys.forEach((d, i) => {
+    const v = days[d];
+    const md = d.slice(4,6)+'/'+d.slice(6,8);
+    const popCls = v.pop >= 60 ? 'high' : '';
+    h += `<div class="wcard">
+      <div class="wd">${labels[i]||md} <span style="font-weight:400">${md}</span></div>
+      <div class="wi">${skyIcon(v.sky, v.pty)}</div>
+      <div class="wt">${v.tmax ?? '-'}° <span class="lo">${v.tmin ?? '-'}°</span></div>
+      <div class="wp ${popCls}">💧 ${v.pop}%</div>
+    </div>`;
+  });
+  wrap.innerHTML = h;
+}
 
 /* ★ 그룹 단일 색 (lightness 고정 50%) */
 const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미:25, 시립:55, 중동:190};
@@ -649,6 +763,7 @@ function saveJson(){
 // 초기 UI 동기화
 syncUI();
 render();
+renderWeather();
 </script>
 </body>
 </html>"""
