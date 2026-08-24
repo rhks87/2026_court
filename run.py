@@ -5,7 +5,7 @@
   - 코트 필터 버튼 배경색 꽉 채우기
   - 같은 그룹 = 완전 동일한 색
 """
-import requests, json, time, csv, io, re
+import requests, json, time
 from datetime import datetime, timezone, timedelta
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
@@ -437,7 +437,8 @@ td{position:relative}
 /* 날씨 요약 카드 */
 .weather-wrap{display:flex;gap:8px;margin-top:12px;overflow-x:auto}
 .wcard{flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
-  border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow)}
+  border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow);cursor:pointer}
+.wcard.sel{box-shadow:0 0 0 2px var(--accent)}
 .wcard .wd{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px}
 .wcard .wi{font-size:22px;line-height:1}
 .wcard .wt{font-size:13px;font-weight:700;margin-top:4px}
@@ -445,8 +446,6 @@ td{position:relative}
 .wcard .wp{font-size:11px;margin-top:2px}
 .wcard .wp.high{color:var(--sat);font-weight:700}
 @media(max-width:700px){.wcard{min-width:76px;padding:8px 6px}.wcard .wi{font-size:18px}}
-.wcard{cursor:pointer}
-.wcard.sel{box-shadow:0 0 0 2px var(--accent)}
 
 .weather-hourly{display:flex;gap:0;margin-top:8px;background:var(--card);
   border:1px solid var(--border);border-radius:12px;padding:12px 8px;
@@ -465,9 +464,21 @@ td{position:relative}
   padding:5px 10px;border-radius:7px;white-space:nowrap;
   box-shadow:0 4px 12px rgba(0,0,0,.25);opacity:0;transition:opacity .1s}
 
+.confirm-bar{position:fixed;left:0;right:0;bottom:0;z-index:1000;
+  background:var(--card);border-top:1px solid var(--border);
+  padding:12px 14px;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;box-shadow:0 -4px 16px rgba(0,0,0,.15);
+  transform:translateY(110%);transition:transform .2s ease}
+.confirm-bar.show{transform:translateY(0)}
+.confirm-bar .cb-txt{font-size:13px;font-weight:700;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.confirm-bar button{flex-shrink:0;background:var(--accent);color:#fff;border:none;
+  padding:9px 16px;border-radius:9px;font-weight:700;font-size:13px;
+  font-family:inherit;cursor:pointer}
+
 @media(max-width:700px){
   table.cal td{height:120px;padding:4px 3px}
-  .slot{font-size:10px;padding:3px 4px}
+  .slot{font-size:10px;padding:3px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .dnum{font-size:12px}
   .slots{grid-template-columns:1fr}
   .slots.exp{grid-template-columns:1fr}  /* 더보기 펼쳐도 1열 유지 */
@@ -486,6 +497,10 @@ td{position:relative}
 </head>
 <body data-theme="light">
 <div class="tip" id="tip"></div>
+<div class="confirm-bar" id="confirmBar">
+  <span class="cb-txt" id="cbTxt"></span>
+  <button onclick="goPending()">예약하러 가기 →</button>
+</div>
 
 <div class="hdr">
   <div class="hdr-left">
@@ -547,7 +562,7 @@ function skyIcon(sky, pty){
   if(sky === "3") return "⛅";
   return "☁️";
 }
-let expandedWDay = null;
+let expandedWDay;  // undefined = 아직 초기화 안 됨 (최초 1회만 "오늘"로 기본 오픈)
 
 function renderWeather(){
   const wrap = document.getElementById('weatherWrap');
@@ -555,7 +570,7 @@ function renderWeather(){
   const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
   const keys = Object.keys(days).sort();
   if(keys.length === 0){ wrap.style.display='none'; return; }
-  if(expandedWDay === null) expandedWDay = keys[0];  // 기본: 오늘 펼침
+  if(expandedWDay === undefined) expandedWDay = keys[0];  // 최초 로드시에만 "오늘" 기본 오픈
   const labels = ['오늘','내일','모레'];
   let h = '';
   keys.forEach((d, i) => {
@@ -771,6 +786,8 @@ function buildSlots(slots,ds){
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
+      data-url="${s.court.url}" data-tip="${tipFull.replace(/"/g,'&quot;')}"
+      onclick="return handleSlotClick(event,this)"
       onmouseenter="showTip(event,'${tipFull.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
     ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span>${rainMark}</a>`;
@@ -842,6 +859,37 @@ function showTip(e,txt){tip.textContent=txt;tip.style.opacity='1';moveTip(e);}
 document.addEventListener('mousemove',moveTip);
 function moveTip(e){tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY-30)+'px';}
 function hideTip(){tip.style.opacity='0';}
+
+/* 모바일(터치, hover 불가) 전용 2단계 탭: 1차=상세보기, 2차=이동 */
+const touchMode = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+let pendingSlot = null;
+const confirmBar = document.getElementById('confirmBar');
+const cbTxt = document.getElementById('cbTxt');
+
+function handleSlotClick(e, el){
+  if(!touchMode) return true;              // 데스크톱: 기존처럼 바로 이동
+  if(pendingSlot === el){                  // 같은 슬롯 재탭 → 이동 허용
+    pendingSlot = null; confirmBar.classList.remove('show');
+    return true;
+  }
+  e.preventDefault();                      // 1차 탭: 이동 막고 상세 표시
+  pendingSlot = el;
+  cbTxt.textContent = el.dataset.tip;
+  confirmBar.dataset.url = el.dataset.url;
+  confirmBar.classList.add('show');
+  return false;
+}
+function goPending(){
+  const url = confirmBar.dataset.url;
+  if(url) window.open(url, '_blank');
+  pendingSlot = null;
+  confirmBar.classList.remove('show');
+}
+document.addEventListener('click', (e)=>{
+  if(!pendingSlot) return;
+  if(e.target.closest('.slot') || e.target.closest('.confirm-bar')) return;
+  pendingSlot = null; confirmBar.classList.remove('show');
+});
 
 function toggleTheme(){
   document.body.dataset.theme=document.body.dataset.theme==='dark'?'light':'dark';}
