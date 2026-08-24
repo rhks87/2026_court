@@ -205,16 +205,22 @@ def fetch_weather():
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 NOTIFY_HOURS = {18, 20}  # 알림 대상 시간대 — 대시보드 기본 필터(저녁)와 동일, 필요시 조정
+NOTIFY_DAYS_AHEAD = 14   # 알림 대상 기간 — 오늘부터 N일 이내 (너무 먼 미래는 실제 예약 오픈 전일 수 있어 제외)
 PREV_STATE_FILE = "previous_slots.json"
 
 def notify_new_slots(result):
     """
-    직전 실행과 비교해 새로 열린 빈자리(NOTIFY_HOURS 시간대만)를 텔레그램으로 알림.
-    토큰/chat_id 미설정 시 조용히 생략 — 알림 실패가 본 기능(코트 정보 갱신)을 막지 않음.
+    직전 실행과 비교해 새로 열린 빈자리(오늘~NOTIFY_DAYS_AHEAD일 이내, NOTIFY_HOURS 시간대만)를
+    텔레그램으로 알림. 토큰/chat_id 미설정 시 조용히 생략.
+    최초 실행(비교 대상 없음)에는 알림 폭탄을 막기 위해 기준선만 저장하고 알림은 보내지 않음.
     """
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
         print("  [!] 텔레그램 미설정 — 알림 생략")
         return
+
+    KST = timezone(timedelta(hours=9))
+    today = datetime.now(KST).date()
+    max_date = today + timedelta(days=NOTIFY_DAYS_AHEAD)
 
     current = set()
     label_by_key = {}
@@ -222,41 +228,48 @@ def notify_new_slots(result):
         for s in c["empty_slots"]:
             try:
                 hour = int(s["begin"].split(":")[0])
+                sdate = datetime.strptime(s["date"], "%Y-%m-%d").date()
             except Exception:
                 continue
             if hour not in NOTIFY_HOURS:
+                continue
+            if not (today <= sdate <= max_date):  # 과거 날짜 / 너무 먼 미래 제외
                 continue
             key = f'{c["idx"]}|{s["date"]}|{s["begin"]}'
             current.add(key)
             label_by_key[key] = f'{c["name"]} {s["date"]} {s["begin"]}~{s["end"]}'
 
+    is_first_run = not os.path.exists(PREV_STATE_FILE)
+
     prev = set()
-    if os.path.exists(PREV_STATE_FILE):
+    if not is_first_run:
         try:
             with open(PREV_STATE_FILE, encoding="utf-8") as f:
                 prev = set(json.load(f))
         except Exception:
             prev = set()
 
-    new_keys = sorted(current - prev)
-
-    if new_keys:
-        lines = [label_by_key[k] for k in new_keys[:20]]  # 과다 알림 방지 (최대 20건 표시)
-        more = len(new_keys) - len(lines)
-        msg = "🎾 새 빈자리 발생!\n" + "\n".join(lines)
-        if more > 0:
-            msg += f"\n...외 {more}건 더"
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
-                timeout=10,
-            )
-            print(f"  [알림] 신규 빈자리 {len(new_keys)}건 전송 완료")
-        except Exception as e:
-            print(f"  [!] 텔레그램 전송 실패: {e}")
+    if is_first_run:
+        print(f"  [알림] 최초 실행 — 기준선 {len(current)}건만 저장, 알림 생략")
     else:
-        print("  [알림] 신규 빈자리 없음")
+        new_keys = sorted(current - prev)
+        if new_keys:
+            lines = [label_by_key[k] for k in new_keys[:20]]  # 과다 알림 방지 (최대 20건 표시)
+            more = len(new_keys) - len(lines)
+            msg = "🎾 새 빈자리 발생!\n" + "\n".join(lines)
+            if more > 0:
+                msg += f"\n...외 {more}건 더"
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+                    timeout=10,
+                )
+                print(f"  [알림] 신규 빈자리 {len(new_keys)}건 전송 완료")
+            except Exception as e:
+                print(f"  [!] 텔레그램 전송 실패: {e}")
+        else:
+            print("  [알림] 신규 빈자리 없음")
 
     with open(PREV_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(current), f, ensure_ascii=False)
