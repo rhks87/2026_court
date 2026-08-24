@@ -792,7 +792,7 @@ function weatherForDate(ds){
   const key = ds.replace(/-/g, '');
   return days[key] || null;
 }
-const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미실내:25, 죽미실외:35, 시립:55, 중동:190};
+const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미실내:25, 죽미실외:165, 시립:55, 중동:190};
 function groupColor(g){ return `hsl(${GH[g]??0},65%,50%)`; }
 function slotColor(c){ return groupColor(c.group||c.name); }
 
@@ -846,11 +846,15 @@ const allGroups=[...new Set(COURTS.map(c=>c.group||c.name))];
 let fGroups=new Set(allGroups);
 const expanded=new Set();
 
+/* 필터 버튼 표시명 (내부 그룹 키는 유지, 화면 표시만 변경) */
+const GROUP_LABEL = {금반저류지:'금반', 죽미실내:'죽미(실내)', 죽미실외:'죽미(실외)'};
+function groupLabel(g){ return GROUP_LABEL[g] || g; }
+
 /* ★ 코트 버튼 — 배경색 꽉 채우기 */
 const gf=document.getElementById('gf');
 allGroups.forEach(g=>{
   const b=document.createElement('button');
-  b.className='btn-court'; b.dataset.v=g; b.textContent=g;
+  b.className='btn-court'; b.dataset.v=g; b.textContent=groupLabel(g);
   b.style.background=groupColor(g);
   b.onclick=()=>togG(g);
   gf.appendChild(b);
