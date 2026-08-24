@@ -5,8 +5,8 @@
   - 코트 필터 버튼 배경색 꽉 채우기
   - 같은 그룹 = 완전 동일한 색
 """
-import requests, json, time, os
-from datetime import datetime, timezone, timedelta
+import requests, json, time, os, calendar
+from datetime import datetime, timezone, timedelta, date
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
 RESV_URL = "https://yeyak.hscity.go.kr/stadiumDetail.do?stadiumIdx="
@@ -205,13 +205,27 @@ def fetch_weather():
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 NOTIFY_HOURS = {18, 20}  # 알림 대상 시간대 — 대시보드 기본 필터(저녁)와 동일, 필요시 조정
-NOTIFY_DAYS_AHEAD = 14   # 알림 대상 기간 — 오늘부터 N일 이내 (너무 먼 미래는 실제 예약 오픈 전일 수 있어 제외)
+HSCITY_OPEN_DAY, HSCITY_OPEN_HOUR = 27, 10  # 화성 예약시스템: 매월 27일 10:00에 '다음달' 오픈
+OSAN_OPEN_DAY,   OSAN_OPEN_HOUR   = 26, 20  # 오산 예약시스템: 매월 26일 20:00에 '다음달' 오픈
 PREV_STATE_FILE = "previous_slots.json"
+
+def _notify_date_range(today):
+    """이번달(오늘~말일) + 다음달(각 시스템 오픈일 지났을 때만) 범위 계산."""
+    _, cur_last = calendar.monthrange(today.year, today.month)
+    cur_month_end = today.replace(day=cur_last)
+    ny, nm = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    _, next_last = calendar.monthrange(ny, nm)
+    next_month_start = date(ny, nm, 1)
+    next_month_end = date(ny, nm, next_last)
+    return cur_month_end, next_month_start, next_month_end
 
 def notify_new_slots(result):
     """
-    직전 실행과 비교해 새로 열린 빈자리(오늘~NOTIFY_DAYS_AHEAD일 이내, NOTIFY_HOURS 시간대만)를
-    텔레그램으로 알림. 토큰/chat_id 미설정 시 조용히 생략.
+    직전 실행과 비교해 새로 열린 빈자리를 텔레그램으로 알림 (NOTIFY_HOURS 시간대만).
+    알림 대상 기간: 오늘~이번달 말일은 항상 포함. 다음달은 각 예약시스템의 오픈 일시(요일+시각)가
+    지난 경우에만 포함 (화성 매월 27일 10시 / 오산 매월 26일 20시 — 그 전에는 실제 예약이
+    불가능해 알림이 노이즈가 됨).
+    토큰/chat_id 미설정 시 조용히 생략.
     최초 실행(비교 대상 없음)에는 알림 폭탄을 막기 위해 기준선만 저장하고 알림은 보내지 않음.
     """
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
@@ -219,12 +233,17 @@ def notify_new_slots(result):
         return
 
     KST = timezone(timedelta(hours=9))
-    today = datetime.now(KST).date()
-    max_date = today + timedelta(days=NOTIFY_DAYS_AHEAD)
+    now = datetime.now(KST)
+    today = now.date()
+    cur_month_end, next_month_start, next_month_end = _notify_date_range(today)
+    hscity_open_at = now.replace(day=HSCITY_OPEN_DAY, hour=HSCITY_OPEN_HOUR, minute=0, second=0, microsecond=0)
+    osan_open_at   = now.replace(day=OSAN_OPEN_DAY,   hour=OSAN_OPEN_HOUR,   minute=0, second=0, microsecond=0)
 
     current = set()
     label_by_key = {}
     for c in result:
+        is_osan = str(c["idx"]).startswith("osan_")
+        open_at = osan_open_at if is_osan else hscity_open_at
         for s in c["empty_slots"]:
             try:
                 hour = int(s["begin"].split(":")[0])
@@ -233,7 +252,11 @@ def notify_new_slots(result):
                 continue
             if hour not in NOTIFY_HOURS:
                 continue
-            if not (today <= sdate <= max_date):  # 과거 날짜 / 너무 먼 미래 제외
+            if today <= sdate <= cur_month_end:
+                pass  # 이번달: 항상 허용
+            elif next_month_start <= sdate <= next_month_end and now >= open_at:
+                pass  # 다음달: 오픈 일시(일+시각) 지난 경우만 허용
+            else:
                 continue
             key = f'{c["idx"]}|{s["date"]}|{s["begin"]}'
             current.add(key)
