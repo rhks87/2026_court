@@ -33,6 +33,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html previous_slots.json
-          git add -A -- pending_notify.json
+          if [ -f pending_notify.json ]; then
+            git add pending_notify.json
+          elif git ls-files --error-unmatch pending_notify.json > /dev/null 2>&1; then
+            git rm --cached pending_notify.json > /dev/null
+          fi
           git diff --staged --quiet || git commit -m "자동 갱신 $(date '+%Y-%m-%d %H:%M')"
           git push
