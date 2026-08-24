@@ -5,7 +5,7 @@
   - 코트 필터 버튼 배경색 꽉 채우기
   - 같은 그룹 = 완전 동일한 색
 """
-import requests, json, time
+import requests, json, time, os
 from datetime import datetime, timezone, timedelta
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
@@ -121,7 +121,7 @@ def fetch_osan(year, month):
 
 
 # ===== 날씨 (기상청 단기예보, 동탄 기준) =====
-KMA_SERVICE_KEY = __import__("os").environ.get("KMA_SERVICE_KEY", "")
+KMA_SERVICE_KEY = os.environ.get("KMA_SERVICE_KEY", "")
 KMA_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
 KMA_NX, KMA_NY = 62, 119  # 동탄 기준 격자좌표 (최초 실행 결과로 유효성 확인 필요)
 KMA_ANNOUNCE_HOURS = [2, 5, 8, 11, 14, 17, 20, 23]
@@ -201,6 +201,67 @@ def fetch_weather():
     return {"base_date": base_date, "base_time": base_time, "days": summary, "slots": slots}
 
 
+# ===== 텔레그램 신규 빈자리 알림 =====
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
+NOTIFY_HOURS = {18, 20}  # 알림 대상 시간대 — 대시보드 기본 필터(저녁)와 동일, 필요시 조정
+PREV_STATE_FILE = "previous_slots.json"
+
+def notify_new_slots(result):
+    """
+    직전 실행과 비교해 새로 열린 빈자리(NOTIFY_HOURS 시간대만)를 텔레그램으로 알림.
+    토큰/chat_id 미설정 시 조용히 생략 — 알림 실패가 본 기능(코트 정보 갱신)을 막지 않음.
+    """
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
+        print("  [!] 텔레그램 미설정 — 알림 생략")
+        return
+
+    current = set()
+    label_by_key = {}
+    for c in result:
+        for s in c["empty_slots"]:
+            try:
+                hour = int(s["begin"].split(":")[0])
+            except Exception:
+                continue
+            if hour not in NOTIFY_HOURS:
+                continue
+            key = f'{c["idx"]}|{s["date"]}|{s["begin"]}'
+            current.add(key)
+            label_by_key[key] = f'{c["name"]} {s["date"]} {s["begin"]}~{s["end"]}'
+
+    prev = set()
+    if os.path.exists(PREV_STATE_FILE):
+        try:
+            with open(PREV_STATE_FILE, encoding="utf-8") as f:
+                prev = set(json.load(f))
+        except Exception:
+            prev = set()
+
+    new_keys = sorted(current - prev)
+
+    if new_keys:
+        lines = [label_by_key[k] for k in new_keys[:20]]  # 과다 알림 방지 (최대 20건 표시)
+        more = len(new_keys) - len(lines)
+        msg = "🎾 새 빈자리 발생!\n" + "\n".join(lines)
+        if more > 0:
+            msg += f"\n...외 {more}건 더"
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+                timeout=10,
+            )
+            print(f"  [알림] 신규 빈자리 {len(new_keys)}건 전송 완료")
+        except Exception as e:
+            print(f"  [!] 텔레그램 전송 실패: {e}")
+    else:
+        print("  [알림] 신규 빈자리 없음")
+
+    with open(PREV_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(current), f, ensure_ascii=False)
+
+
 def main():
     with open("stadiums.json", encoding="utf-8") as f:
         stadiums = json.load(f)
@@ -264,6 +325,9 @@ def main():
     print(f"  [날씨] 동탄 단기예보 조회 중...", end=" ")
     weather = fetch_weather()
     print(f"{len(weather.get('days', {}))}일치 확보" if weather else "생략")
+
+    # 신규 빈자리 텔레그램 알림
+    notify_new_slots(result)
 
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
@@ -495,7 +559,15 @@ td{position:relative}
 }
 </style>
 </head>
-<body data-theme="light">
+<body>
+<script>
+/* 초기 테마: 저장된 수동 설정 > 시스템(OS) 다크모드 설정 순으로 결정 */
+(function(){
+  const saved = localStorage.getItem('theme');
+  const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.body.dataset.theme = saved || (sysDark ? 'dark' : 'light');
+})();
+</script>
 <div class="tip" id="tip"></div>
 <div class="confirm-bar" id="confirmBar">
   <span class="cb-txt" id="cbTxt"></span>
@@ -892,7 +964,16 @@ document.addEventListener('click', (e)=>{
 });
 
 function toggleTheme(){
-  document.body.dataset.theme=document.body.dataset.theme==='dark'?'light':'dark';}
+  const next = document.body.dataset.theme==='dark' ? 'light' : 'dark';
+  document.body.dataset.theme = next;
+  localStorage.setItem('theme', next);  // 수동 설정 저장 — 이후 시스템 변경보다 우선
+}
+/* 사용자가 수동으로 설정한 적 없으면, OS 다크모드 전환 시 자동 반영 */
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e=>{
+  if(!localStorage.getItem('theme')){
+    document.body.dataset.theme = e.matches ? 'dark' : 'light';
+  }
+});
 function saveJson(){
   const blob=new Blob([JSON.stringify(COURTS,null,2)],{type:'application/json'});
   const a=document.createElement('a');
