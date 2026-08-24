@@ -584,7 +584,8 @@ td{position:relative}
 .summary{font-size:11px;color:var(--muted);text-align:center;margin-top:8px}
 
 /* 날씨 요약 카드 */
-.weather-wrap{display:flex;gap:8px;margin-top:12px;overflow-x:auto}
+.weather-wrap{display:flex;gap:8px;margin-top:12px;overflow-x:auto;
+  -webkit-overflow-scrolling:touch;touch-action:pan-x}
 .wcard{flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
   border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow);cursor:pointer}
 .wcard.sel{box-shadow:0 0 0 2px var(--accent)}
@@ -598,7 +599,8 @@ td{position:relative}
 
 .weather-hourly{display:flex;gap:0;margin-top:8px;background:var(--card);
   border:1px solid var(--border);border-radius:12px;padding:12px 8px;
-  overflow-x:auto;box-shadow:var(--shadow)}
+  overflow-x:auto;-webkit-overflow-scrolling:touch;touch-action:pan-x;
+  box-shadow:var(--shadow)}
 .whr{flex:0 0 auto;min-width:52px;text-align:center;padding:0 6px;
   border-right:1px solid var(--border)}
 .whr:last-child{border-right:none}
