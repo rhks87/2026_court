@@ -161,6 +161,20 @@ td{position:relative}
 .wcard .wp{font-size:11px;margin-top:2px}
 .wcard .wp.high{color:var(--sat);font-weight:700}
 @media(max-width:700px){.wcard{min-width:76px;padding:8px 6px}.wcard .wi{font-size:18px}}
+.wcard{cursor:pointer}
+.wcard.sel{box-shadow:0 0 0 2px var(--accent)}
+
+.weather-hourly{display:flex;gap:0;margin-top:8px;background:var(--card);
+  border:1px solid var(--border);border-radius:12px;padding:12px 8px;
+  overflow-x:auto;box-shadow:var(--shadow)}
+.whr{flex:0 0 auto;min-width:52px;text-align:center;padding:0 6px;
+  border-right:1px solid var(--border)}
+.whr:last-child{border-right:none}
+.whr-t{font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px}
+.whr-i{font-size:18px;line-height:1;margin-bottom:4px}
+.whr-temp{font-size:13px;font-weight:700}
+.whr-pop{font-size:10px;color:var(--sat);margin-top:2px}
+@media(max-width:700px){.whr{min-width:44px}.whr-i{font-size:15px}}
 
 .tip{position:fixed;pointer-events:none;z-index:9999;
   background:#1e293b;color:#fff;font-size:12px;font-weight:500;
@@ -191,7 +205,7 @@ td{position:relative}
 
 <div class="hdr">
   <div class="hdr-left">
-    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-08-24 09:13 기준</span></h1>
+    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-08-24 09:19 기준</span></h1>
   </div>
   <div class="hdr-r">
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
@@ -234,6 +248,7 @@ td{position:relative}
 <div class="cal-wrap"><div id="cal"></div></div>
 
 <div class="weather-wrap" id="weatherWrap"></div>
+<div class="weather-hourly" id="weatherHourly" style="display:none"></div>
 
 
 <script>
@@ -248,19 +263,23 @@ function skyIcon(sky, pty){
   if(sky === "3") return "⛅";
   return "☁️";
 }
+let expandedWDay = null;
+
 function renderWeather(){
   const wrap = document.getElementById('weatherWrap');
   if(!wrap) return;
   const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
   const keys = Object.keys(days).sort();
   if(keys.length === 0){ wrap.style.display='none'; return; }
+  if(expandedWDay === null) expandedWDay = keys[0];  // 기본: 오늘 펼침
   const labels = ['오늘','내일','모레'];
   let h = '';
   keys.forEach((d, i) => {
     const v = days[d];
     const md = d.slice(4,6)+'/'+d.slice(6,8);
     const popCls = v.pop >= 60 ? 'high' : '';
-    h += `<div class="wcard">
+    const sel = d === expandedWDay ? ' sel' : '';
+    h += `<div class="wcard${sel}" onclick="toggleWDay('${d}')">
       <div class="wd">${labels[i]||md} <span style="font-weight:400">${md}</span></div>
       <div class="wi">${skyIcon(v.sky, v.pty)}</div>
       <div class="wt">${v.tmax ?? '-'}° <span class="lo">${v.tmin ?? '-'}°</span></div>
@@ -268,6 +287,35 @@ function renderWeather(){
     </div>`;
   });
   wrap.innerHTML = h;
+  renderWeatherHourly();
+}
+
+function toggleWDay(d){
+  expandedWDay = (expandedWDay === d) ? null : d;
+  renderWeather();
+}
+
+function renderWeatherHourly(){
+  const panel = document.getElementById('weatherHourly');
+  if(!panel) return;
+  if(!expandedWDay){ panel.innerHTML=''; panel.style.display='none'; return; }
+  const wslots = (WEATHER && WEATHER.slots) ? WEATHER.slots : {};
+  const items = Object.keys(wslots).filter(k=>k.startsWith(expandedWDay)).sort();
+  if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
+  panel.style.display='flex';
+  let h='';
+  items.forEach(k=>{
+    const hm = k.split('-')[1];  // "0600"
+    const hr = parseInt(hm.slice(0,2));
+    const v = wslots[k];
+    h += `<div class="whr">
+      <div class="whr-t">${hr}시</div>
+      <div class="whr-i">${skyIcon(v.sky, v.pty)}</div>
+      <div class="whr-temp">${v.tmp ?? '-'}°</div>
+      <div class="whr-pop">💧${v.pop ?? 0}%</div>
+    </div>`;
+  });
+  panel.innerHTML = h;
 }
 
 /* 코트 슬롯 시각(date, "HH:MM")에 가장 가까운 3시간 단위 예보 찾기 */
