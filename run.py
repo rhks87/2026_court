@@ -207,7 +207,9 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 NOTIFY_HOURS = {18, 20}  # 알림 대상 시간대 — 대시보드 기본 필터(저녁)와 동일, 필요시 조정
 HSCITY_OPEN_DAY, HSCITY_OPEN_HOUR = 27, 10  # 화성 예약시스템: 매월 27일 10:00에 '다음달' 오픈
 OSAN_OPEN_DAY,   OSAN_OPEN_HOUR   = 26, 20  # 오산 예약시스템: 매월 26일 20:00에 '다음달' 오픈
+QUIET_START_HOUR, QUIET_END_HOUR  = 23, 7   # 23시~07시(다음날)는 발송 보류, 아침에 모아서 전송
 PREV_STATE_FILE = "previous_slots.json"
+PENDING_FILE    = "pending_notify.json"
 
 def _notify_date_range(today):
     """이번달(오늘~말일) + 다음달(각 시스템 오픈일 지났을 때만) 범위 계산."""
@@ -219,14 +221,35 @@ def _notify_date_range(today):
     next_month_end = date(ny, nm, next_last)
     return cur_month_end, next_month_start, next_month_end
 
-def notify_new_slots(result):
+def _is_quiet_hour(now):
+    h = now.hour
+    return h >= QUIET_START_HOUR or h < QUIET_END_HOUR
+
+def _format_group_message(entries):
+    """코트별로 묶어서 메시지 구성. entries: [{"court","md","wd","begin","end","pop"}, ...]"""
+    grouped = {}
+    order = []
+    for e in entries:
+        if e["court"] not in grouped:
+            grouped[e["court"]] = []
+            order.append(e["court"])
+        grouped[e["court"]].append(e)
+    lines = ["🎾 새 빈자리 발생!"]
+    for court in order:
+        lines.append(f"\n<b>{court}</b>")
+        for e in grouped[court]:
+            wtxt = f"  💧{e['pop']}%" if e.get("pop") is not None else ""
+            lines.append(f"  {e['md']}({e['wd']}) {e['begin']}~{e['end']}{wtxt}")
+    return "\n".join(lines)
+
+def notify_new_slots(result, weather):
     """
     직전 실행과 비교해 새로 열린 빈자리를 텔레그램으로 알림 (NOTIFY_HOURS 시간대만).
-    알림 대상 기간: 오늘~이번달 말일은 항상 포함. 다음달은 각 예약시스템의 오픈 일시(요일+시각)가
-    지난 경우에만 포함 (화성 매월 27일 10시 / 오산 매월 26일 20시 — 그 전에는 실제 예약이
-    불가능해 알림이 노이즈가 됨).
-    토큰/chat_id 미설정 시 조용히 생략.
-    최초 실행(비교 대상 없음)에는 알림 폭탄을 막기 위해 기준선만 저장하고 알림은 보내지 않음.
+    - 기간: 오늘~이번달 말일은 항상, 다음달은 각 시스템 오픈 일시가 지난 경우만
+    - 날씨: 단기예보 범위(3일) 내 날짜면 강수확률을 함께 표시
+    - 조용한 시간대(23~07시): 즉시 발송 대신 보류했다가, 다음 정상 시간대 실행 때 모아서 전송
+    - 최초 실행: 알림 폭탄 방지를 위해 기준선만 저장, 알림 없음
+    - 코트별로 그룹핑해서 가독성 확보
     """
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
         print("  [!] 텔레그램 미설정 — 알림 생략")
@@ -238,9 +261,10 @@ def notify_new_slots(result):
     cur_month_end, next_month_start, next_month_end = _notify_date_range(today)
     hscity_open_at = now.replace(day=HSCITY_OPEN_DAY, hour=HSCITY_OPEN_HOUR, minute=0, second=0, microsecond=0)
     osan_open_at   = now.replace(day=OSAN_OPEN_DAY,   hour=OSAN_OPEN_HOUR,   minute=0, second=0, microsecond=0)
+    weather_days = (weather or {}).get("days", {})
 
     current = set()
-    label_by_key = {}
+    entry_by_key = {}
     for c in result:
         is_osan = str(c["idx"]).startswith("osan_")
         open_at = osan_open_at if is_osan else hscity_open_at
@@ -255,15 +279,20 @@ def notify_new_slots(result):
             if today <= sdate <= cur_month_end:
                 pass  # 이번달: 항상 허용
             elif next_month_start <= sdate <= next_month_end and now >= open_at:
-                pass  # 다음달: 오픈 일시(일+시각) 지난 경우만 허용
+                pass  # 다음달: 오픈 일시 지난 경우만 허용
             else:
                 continue
             key = f'{c["idx"]}|{s["date"]}|{s["begin"]}'
             current.add(key)
-            label_by_key[key] = f'{c["name"]} {s["date"]} {s["begin"]}~{s["end"]}'
+            wkey = s["date"].replace("-", "")
+            pop = weather_days.get(wkey, {}).get("pop")
+            entry_by_key[key] = {
+                "court": c["name"], "md": s["date"][5:],
+                "wd": "월화수목금토일"[sdate.weekday()],
+                "begin": s["begin"], "end": s["end"], "pop": pop,
+            }
 
     is_first_run = not os.path.exists(PREV_STATE_FILE)
-
     prev = set()
     if not is_first_run:
         try:
@@ -275,24 +304,44 @@ def notify_new_slots(result):
     if is_first_run:
         print(f"  [알림] 최초 실행 — 기준선 {len(current)}건만 저장, 알림 생략")
     else:
-        new_keys = sorted(current - prev)
-        if new_keys:
-            lines = [label_by_key[k] for k in new_keys[:20]]  # 과다 알림 방지 (최대 20건 표시)
-            more = len(new_keys) - len(lines)
-            msg = "🎾 새 빈자리 발생!\n" + "\n".join(lines)
-            if more > 0:
-                msg += f"\n...외 {more}건 더"
+        new_entries = [entry_by_key[k] for k in sorted(current - prev)]
+
+        pending = []
+        if os.path.exists(PENDING_FILE):
             try:
-                requests.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                    data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
-                    timeout=10,
-                )
-                print(f"  [알림] 신규 빈자리 {len(new_keys)}건 전송 완료")
-            except Exception as e:
-                print(f"  [!] 텔레그램 전송 실패: {e}")
+                with open(PENDING_FILE, encoding="utf-8") as f:
+                    pending = json.load(f)
+            except Exception:
+                pending = []
+
+        if _is_quiet_hour(now):
+            if new_entries:
+                pending.extend(new_entries)
+                with open(PENDING_FILE, "w", encoding="utf-8") as f:
+                    json.dump(pending, f, ensure_ascii=False)
+                print(f"  [알림] 조용한 시간대 — {len(new_entries)}건 보류 (누적 {len(pending)}건)")
+            else:
+                print("  [알림] 조용한 시간대 — 신규 없음")
         else:
-            print("  [알림] 신규 빈자리 없음")
+            combined = pending + new_entries
+            if combined:
+                msg = _format_group_message(combined[:30])  # 과다 알림 방지
+                more = len(combined) - 30
+                if more > 0:
+                    msg += f"\n\n...외 {more}건 더"
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                        data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
+                        timeout=10,
+                    )
+                    print(f"  [알림] 신규 빈자리 {len(combined)}건 전송 완료 (보류분 {len(pending)}건 포함)")
+                except Exception as e:
+                    print(f"  [!] 텔레그램 전송 실패: {e}")
+                if os.path.exists(PENDING_FILE):
+                    os.remove(PENDING_FILE)
+            else:
+                print("  [알림] 신규 빈자리 없음")
 
     with open(PREV_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(current), f, ensure_ascii=False)
@@ -362,8 +411,8 @@ def main():
     weather = fetch_weather()
     print(f"{len(weather.get('days', {}))}일치 확보" if weather else "생략")
 
-    # 신규 빈자리 텔레그램 알림
-    notify_new_slots(result)
+    # 신규 빈자리 텔레그램 알림 (날씨 정보 함께 전달)
+    notify_new_slots(result, weather)
 
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
