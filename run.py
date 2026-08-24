@@ -172,13 +172,19 @@ def fetch_weather():
         return {}
 
     by_date = {}
+    slots = {}  # "YYYYMMDD-HHMM": {"tmp":.., "pop":.., "sky":.., "pty":..}
     for it in items:
-        d, cat, val = it["fcstDate"], it["category"], it["fcstValue"]
+        d, t, cat, val = it["fcstDate"], it["fcstTime"], it["category"], it["fcstValue"]
         by_date.setdefault(d, {"tmp": [], "pop": [], "sky": [], "pty": []})
-        if cat == "TMP": by_date[d]["tmp"].append(float(val))
-        elif cat == "POP": by_date[d]["pop"].append(int(val))
-        elif cat == "SKY": by_date[d]["sky"].append(val)
-        elif cat == "PTY": by_date[d]["pty"].append(val)
+        slots.setdefault(f"{d}-{t}", {})
+        if cat == "TMP":
+            by_date[d]["tmp"].append(float(val)); slots[f"{d}-{t}"]["tmp"] = val
+        elif cat == "POP":
+            by_date[d]["pop"].append(int(val)); slots[f"{d}-{t}"]["pop"] = int(val)
+        elif cat == "SKY":
+            by_date[d]["sky"].append(val); slots[f"{d}-{t}"]["sky"] = val
+        elif cat == "PTY":
+            by_date[d]["pty"].append(val); slots[f"{d}-{t}"]["pty"] = val
 
     summary = {}
     for d, v in sorted(by_date.items())[:3]:  # 오늘+모레까지 최대 3일
@@ -189,7 +195,10 @@ def fetch_weather():
             "sky":  max(set(v["sky"]), key=v["sky"].count) if v["sky"] else "1",
             "pty":  "1" if any(p != "0" for p in v["pty"]) else "0",
         }
-    return {"base_date": base_date, "base_time": base_time, "days": summary}
+    # 3일 범위 밖 슬롯 제거 (용량 절약)
+    valid_dates = set(summary.keys())
+    slots = {k: v for k, v in slots.items() if k.split("-")[0] in valid_dates}
+    return {"base_date": base_date, "base_time": base_time, "days": summary, "slots": slots}
 
 
 def main():
@@ -389,9 +398,8 @@ td.today .dnum{background:var(--today-ring);color:#fff;border-radius:50%;
 td.holiday-bg{background:rgba(239,68,68,.07)!important}
 [data-theme=dark] td.holiday-bg{background:rgba(248,113,113,.1)!important}
 
-.rain-badge{position:absolute;top:2px;right:3px;font-size:11px;
-  display:flex;align-items:center;gap:1px;line-height:1}
-.rain-badge .rp{font-size:8px;font-weight:700;color:var(--sat)}
+.day-wx{position:absolute;top:2px;right:3px;font-size:10px;font-weight:700;
+  color:var(--muted);white-space:nowrap;line-height:1}
 td{position:relative}
 
 .slots{display:grid;grid-template-columns:1fr 1fr;gap:3px;overflow:hidden}
@@ -546,7 +554,17 @@ function renderWeather(){
   wrap.innerHTML = h;
 }
 
-/* 날짜(YYYY-MM-DD) → 날씨 요약 조회 */
+/* 코트 슬롯 시각(date, "HH:MM")에 가장 가까운 3시간 단위 예보 찾기 */
+function weatherForSlotTime(ds, beginHm){
+  const wslots = (WEATHER && WEATHER.slots) ? WEATHER.slots : {};
+  const dKey = ds.replace(/-/g, '');
+  const hour = parseInt(beginHm.split(':')[0]);
+  // 기상청 발표 시간대: 0,3,6,9,12,15,18,21 — 가장 가까운(이후) 시간대로 반올림
+  const fcstHours = [0,3,6,9,12,15,18,21];
+  let nearest = fcstHours.reduce((a,b)=> Math.abs(b-hour)<=Math.abs(a-hour) && b<=hour+2 ? b : a, fcstHours[0]);
+  const tKey = `${dKey}-${String(nearest).padStart(2,'0')}00`;
+  return wslots[tKey] || null;
+}
 function weatherForDate(ds){
   const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
   const key = ds.replace(/-/g, '');
@@ -699,12 +717,15 @@ function buildSlots(slots,ds){
     const sn=shortNm(s.court);
     const mob=mobileNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
+    const wx = weatherForSlotTime(ds, s.begin);
+    const tipFull = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
+    const rainMark = (wx && wx.pop >= 70) ? ' ☔' : '';
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
-      onmouseenter="showTip(event,'${tip2.replace(/'/g,"\\'")}' )"
+      onmouseenter="showTip(event,'${tipFull.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
-    ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span></a>`;
+    ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span>${rainMark}</a>`;
   });
   if(!isExp&&rest>0){
     h+=`<button class="more-btn" onclick="toggleExp('${ds}')">+${rest}개 더 보기 🔽</button>`;
@@ -748,8 +769,10 @@ function render(){
         const holi=HOLI[ds]||'';
         html+=`<td class="${cls}${holi?' holiday-bg':''}">`;
         const wx = weatherForDate(ds);
-        if(wx && wx.pop >= 60){
-          html+=`<div class="rain-badge" title="강수확률 ${wx.pop}%">🌧️<span class="rp">${wx.pop}%</span></div>`;
+        if(wx){
+          const icon = skyIcon(wx.sky, wx.pty);
+          const rainTxt = wx.pop >= 70 ? ` 💧${wx.pop}%` : '';
+          html+=`<div class="day-wx" title="최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%">${icon} ${wx.tmax}°${rainTxt}</div>`;
         }
         html+=`<div class="dnum ${dc}">${day}</div>`;
         if(holi) html+=`<div class="holi">${holi}</div>`;
