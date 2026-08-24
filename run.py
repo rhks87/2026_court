@@ -847,7 +847,7 @@ let fGroups=new Set(allGroups);
 const expanded=new Set();
 
 /* 필터 버튼 표시명 (내부 그룹 키는 유지, 화면 표시만 변경) */
-const GROUP_LABEL = {금반저류지:'금반', 죽미실내:'죽미(실내)', 죽미실외:'죽미(실외)'};
+const GROUP_LABEL = {금반저류지:'금반', 여울공원:'여울', 죽미실내:'죽미(실내)', 죽미실외:'죽미(실외)'};
 function groupLabel(g){ return GROUP_LABEL[g] || g; }
 
 /* ★ 코트 버튼 — 배경색 꽉 채우기 */
