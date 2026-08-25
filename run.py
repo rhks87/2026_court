@@ -412,14 +412,40 @@ def main():
     print(f"  [날씨] 동탄 단기예보 조회 중...", end=" ")
     weather = fetch_weather()
     if weather:
-        print(f"{len(weather.get('days', {}))}일치 확보")
+        print(f"{len(weather.get('days', {}))}일치 확보", end="")
+        # 최신 응답에서 '오늘' 데이터가 빠졌으면(자정 임박 등) 캐시에서 병합해 자정까지 유지
+        today_str = weather.get("today", "")
+        if os.path.exists(WEATHER_CACHE_FILE):
+            try:
+                with open(WEATHER_CACHE_FILE, encoding="utf-8") as f:
+                    cache = json.load(f)
+                merged = 0
+                for dkey, dval in cache.get("days", {}).items():
+                    if dkey >= today_str and dkey not in weather["days"]:
+                        weather["days"][dkey] = dval
+                        merged += 1
+                for skey, sval in cache.get("slots", {}).items():
+                    if skey.split("-")[0] >= today_str and skey not in weather["slots"]:
+                        weather["slots"][skey] = sval
+                if merged:
+                    # 병합으로 4일치 이상이 되면, 가장 이른(오늘 포함) 3일만 유지
+                    keep_dates = sorted(weather["days"].keys())[:3]
+                    weather["days"] = {k: v for k, v in weather["days"].items() if k in keep_dates}
+                    weather["slots"] = {k: v for k, v in weather["slots"].items() if k.split("-")[0] in keep_dates}
+                    print(f" (캐시에서 {merged}일치 보완)")
+                else:
+                    print()
+            except Exception:
+                print()
+        else:
+            print()
         try:
             with open(WEATHER_CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(weather, f, ensure_ascii=False)
         except Exception:
             pass
     else:
-        # 조회 실패 시 직전 성공 데이터로 폴백 (위젯을 아예 가리는 것보다 나음)
+        # 조회 자체가 실패한 경우 — 직전 성공 데이터로 통째로 대체
         if os.path.exists(WEATHER_CACHE_FILE):
             try:
                 with open(WEATHER_CACHE_FILE, encoding="utf-8") as f:
@@ -772,6 +798,9 @@ function renderWeather(){
   const keys = Object.keys(days).sort();
   if(keys.length === 0){ wrap.style.display='none'; return; }
   const todayStr = WEATHER.today || keys[0];
+  // 오늘(실제 날짜) 데이터가 아예 없으면(자정 임박 등) — 가장 빠른 날짜를 '오늘' 기준으로 승격
+  const refStr = days[todayStr] ? todayStr : keys[0];
+  window._weatherRefToday = refStr;  // renderWeatherHourly에서도 동일 기준 사용
   if(expandedWDay === undefined) expandedWDay = keys[0];  // 최초 로드시에만 "오늘"(또는 첫 데이터) 기본 오픈
   let h = '';
   keys.forEach((d) => {
@@ -780,7 +809,7 @@ function renderWeather(){
     const popCls = v.pop >= 60 ? 'high' : '';
     const sel = d === expandedWDay ? ' sel' : '';
     h += `<div class="wcard${sel}" onclick="toggleWDay('${d}')">
-      <div class="wd">${dayLabel(d, todayStr)} <span style="font-weight:400">${md}</span></div>
+      <div class="wd">${dayLabel(d, refStr)} <span style="font-weight:400">${md}</span></div>
       <div class="wi">${skyIcon(v.sky, v.pty)}</div>
       <div class="wt">${v.tmax ?? '-'}° <span class="lo">${v.tmin ?? '-'}°</span></div>
       <div class="wp ${popCls}">💧 ${v.pop}%</div>
@@ -804,9 +833,10 @@ function renderWeatherHourly(){
   if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
   panel.style.display='flex';
 
-  // 오늘 날짜가 펼쳐진 경우에만 현재 시각대 하이라이트 계산
+  // 오늘(승격 기준 포함) 날짜가 펼쳐진 경우에만 현재 시각대 하이라이트 계산
   let nowBucketKey = null;
-  if(expandedWDay === WEATHER.today){
+  const refToday = window._weatherRefToday || WEATHER.today;
+  if(expandedWDay === refToday){
     const curHour = new Date().getHours();
     const buckets = [0,3,6,9,12,15,18,21].filter(h=>h<=curHour);
     const nb = buckets.length ? Math.max(...buckets) : 0;
