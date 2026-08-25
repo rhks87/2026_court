@@ -125,6 +125,7 @@ KMA_SERVICE_KEY = os.environ.get("KMA_SERVICE_KEY", "")
 KMA_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
 KMA_NX, KMA_NY = 62, 119  # 동탄 기준 격자좌표 (최초 실행 결과로 유효성 확인 필요)
 KMA_ANNOUNCE_HOURS = [2, 5, 8, 11, 14, 17, 20, 23]
+WEATHER_CACHE_FILE = "weather_cache.json"
 
 def fetch_weather():
     """
@@ -198,7 +199,8 @@ def fetch_weather():
     # 3일 범위 밖 슬롯 제거 (용량 절약)
     valid_dates = set(summary.keys())
     slots = {k: v for k, v in slots.items() if k.split("-")[0] in valid_dates}
-    return {"base_date": base_date, "base_time": base_time, "days": summary, "slots": slots}
+    today_str = datetime.now(KST).strftime("%Y%m%d")  # 라벨링 기준 — API 응답 순서가 아닌 실제 오늘 날짜
+    return {"base_date": base_date, "base_time": base_time, "today": today_str, "days": summary, "slots": slots}
 
 
 # ===== 텔레그램 신규 빈자리 알림 =====
@@ -409,7 +411,25 @@ def main():
     # 날씨 (동탄 기준, 실패해도 코트 정보는 정상 생성)
     print(f"  [날씨] 동탄 단기예보 조회 중...", end=" ")
     weather = fetch_weather()
-    print(f"{len(weather.get('days', {}))}일치 확보" if weather else "생략")
+    if weather:
+        print(f"{len(weather.get('days', {}))}일치 확보")
+        try:
+            with open(WEATHER_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(weather, f, ensure_ascii=False)
+        except Exception:
+            pass
+    else:
+        # 조회 실패 시 직전 성공 데이터로 폴백 (위젯을 아예 가리는 것보다 나음)
+        if os.path.exists(WEATHER_CACHE_FILE):
+            try:
+                with open(WEATHER_CACHE_FILE, encoding="utf-8") as f:
+                    weather = json.load(f)
+                print(f"조회 실패 — 직전 데이터로 대체 ({len(weather.get('days', {}))}일치)")
+            except Exception:
+                weather = {}
+                print("조회 실패, 캐시도 손상됨 — 생략")
+        else:
+            print("조회 실패, 캐시 없음 — 생략")
 
     # 신규 빈자리 텔레그램 알림 (날씨 정보 함께 전달)
     notify_new_slots(result, weather)
@@ -518,7 +538,8 @@ body{font-family:"Noto Sans KR",-apple-system,sans-serif;
 table.cal{width:100%;border-collapse:collapse;table-layout:fixed}
 table.cal th{padding:10px 4px;font-size:12px;font-weight:700;
   color:var(--muted);background:var(--hover);
-  border-bottom:1px solid var(--border)}
+  border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:20}
 th.h-sun{color:var(--sun)}
 th.h-sat{color:var(--sat)}
 table.cal td{
@@ -533,6 +554,14 @@ table.cal td{
 td.empty{background:var(--hover);opacity:.45}
 td.past{opacity:.4}
 td.today{box-shadow:inset 0 0 0 2px var(--today-ring)}
+
+/* 완전히 지난 주 — 얇게 압축 */
+table.cal td.row-past{
+  height:18px!important;padding:2px 4px!important;
+  font-size:10px;color:var(--muted);text-align:right;
+  background:var(--hover);opacity:.55;vertical-align:middle
+}
+td.empty.row-past{background:var(--hover)}
 
 .dnum{font-size:11px;font-weight:700;margin-bottom:2px;  /* 날짜 숫자 작게 */
   padding:1px 3px;display:inline-block;border-radius:4px}
@@ -608,6 +637,10 @@ td{position:relative}
 .whr-i{font-size:18px;line-height:1;margin-bottom:4px}
 .whr-temp{font-size:13px;font-weight:700}
 .whr-pop{font-size:10px;color:var(--sat);margin-top:2px}
+.whr.now{background:color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius:8px;margin:0 1px}
+.whr.now .whr-t{color:var(--accent)}
+.now-dot{color:var(--accent);font-size:8px}
 @media(max-width:700px){.whr{min-width:44px}.whr-i{font-size:15px}}
 
 .tip{position:fixed;pointer-events:none;z-index:9999;
@@ -626,6 +659,13 @@ td{position:relative}
 .confirm-bar button{flex-shrink:0;background:var(--accent);color:#fff;border:none;
   padding:9px 16px;border-radius:9px;font-weight:700;font-size:13px;
   font-family:inherit;cursor:pointer}
+
+.fab-filter{position:fixed;right:16px;bottom:20px;z-index:900;
+  width:48px;height:48px;border-radius:50%;border:none;
+  background:var(--accent);color:#fff;font-size:20px;
+  box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.fab-filter:active{filter:brightness(1.15)}
 
 @media(max-width:700px){
   table.cal td{height:120px;padding:4px 3px}
@@ -660,6 +700,7 @@ td{position:relative}
   <span class="cb-txt" id="cbTxt"></span>
   <button onclick="goPending()">예약하러 가기 →</button>
 </div>
+<button class="fab-filter" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="필터로 이동">🔍</button>
 
 <div class="hdr">
   <div class="hdr-left">
@@ -721,6 +762,16 @@ function skyIcon(sky, pty){
   if(sky === "3") return "⛅";
   return "☁️";
 }
+/* 날짜(YYYYMMDD) 문자열을 실제 오늘(WEATHER.today) 기준으로 오늘/내일/모레 라벨링 — 배열 순서가 아닌 실제 날짜로 판단 */
+function dayLabel(dateStr, todayStr){
+  const p = s => new Date(+s.slice(0,4), +s.slice(4,6)-1, +s.slice(6,8));
+  const diff = Math.round((p(dateStr) - p(todayStr)) / 86400000);
+  if(diff === 0) return '오늘';
+  if(diff === 1) return '내일';
+  if(diff === 2) return '모레';
+  return `${dateStr.slice(4,6)}/${dateStr.slice(6,8)}`;
+}
+
 let expandedWDay;  // undefined = 아직 초기화 안 됨 (최초 1회만 "오늘"로 기본 오픈)
 
 function renderWeather(){
@@ -729,16 +780,16 @@ function renderWeather(){
   const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
   const keys = Object.keys(days).sort();
   if(keys.length === 0){ wrap.style.display='none'; return; }
-  if(expandedWDay === undefined) expandedWDay = keys[0];  // 최초 로드시에만 "오늘" 기본 오픈
-  const labels = ['오늘','내일','모레'];
+  const todayStr = WEATHER.today || keys[0];
+  if(expandedWDay === undefined) expandedWDay = keys[0];  // 최초 로드시에만 "오늘"(또는 첫 데이터) 기본 오픈
   let h = '';
-  keys.forEach((d, i) => {
+  keys.forEach((d) => {
     const v = days[d];
     const md = d.slice(4,6)+'/'+d.slice(6,8);
     const popCls = v.pop >= 60 ? 'high' : '';
     const sel = d === expandedWDay ? ' sel' : '';
     h += `<div class="wcard${sel}" onclick="toggleWDay('${d}')">
-      <div class="wd">${labels[i]||md} <span style="font-weight:400">${md}</span></div>
+      <div class="wd">${dayLabel(d, todayStr)} <span style="font-weight:400">${md}</span></div>
       <div class="wi">${skyIcon(v.sky, v.pty)}</div>
       <div class="wt">${v.tmax ?? '-'}° <span class="lo">${v.tmin ?? '-'}°</span></div>
       <div class="wp ${popCls}">💧 ${v.pop}%</div>
@@ -761,13 +812,24 @@ function renderWeatherHourly(){
   const items = Object.keys(wslots).filter(k=>k.startsWith(expandedWDay)).sort();
   if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
   panel.style.display='flex';
+
+  // 오늘 날짜가 펼쳐진 경우에만 현재 시각대 하이라이트 계산
+  let nowBucketKey = null;
+  if(expandedWDay === WEATHER.today){
+    const curHour = new Date().getHours();
+    const buckets = [0,3,6,9,12,15,18,21].filter(h=>h<=curHour);
+    const nb = buckets.length ? Math.max(...buckets) : 0;
+    nowBucketKey = `${expandedWDay}-${String(nb).padStart(2,'0')}00`;
+  }
+
   let h='';
   items.forEach(k=>{
     const hm = k.split('-')[1];  // "0600"
     const hr = parseInt(hm.slice(0,2));
     const v = wslots[k];
-    h += `<div class="whr">
-      <div class="whr-t">${hr}시</div>
+    const nowCls = k === nowBucketKey ? ' now' : '';
+    h += `<div class="whr${nowCls}">
+      <div class="whr-t">${hr}시${nowCls ? ' <span class=\'now-dot\'>●</span>' : ''}</div>
       <div class="whr-i">${skyIcon(v.sky, v.pty)}</div>
       <div class="whr-temp">${v.tmp ?? '-'}°</div>
       <div class="whr-pop">💧${v.pop ?? 0}%</div>
@@ -980,11 +1042,31 @@ function render(){
 
   let day=1,row=0,shown=0;
   while(row<6){                  /* 항상 정확히 6행 */
+    // 이 행(주)의 모든 날짜가 이미 지났는지 미리 확인 → 지났으면 얇게 압축
+    let rowHasFuture=false, rowHasDay=false;
+    {
+      let probe=day;
+      for(let cc=0;cc<7;cc++){
+        const isBlank=(row===0&&cc<sd)||probe>td;
+        if(!isBlank){
+          rowHasDay=true;
+          const dtChk=new Date(y,m-1,probe);
+          if(dtChk>=T0) rowHasFuture=true;
+          probe++;
+        }
+      }
+    }
+    const rowPast = rowHasDay && !rowHasFuture;
+
     html+='<tr>';
     for(let c=0;c<7;c++){
       const isBlank = (row===0&&c<sd) || day>td;
       if(isBlank){
-        html+='<td class="empty"></td>';
+        html+=`<td class="empty${rowPast?' row-past':''}"></td>`;
+      } else if(rowPast){
+        // 완전히 지난 주 — 얇게 압축, 날짜 숫자만 표시
+        html+=`<td class="row-past">${day}</td>`;
+        day++;
       } else {
         const ds=`${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
         const dt=new Date(y,m-1,day);
