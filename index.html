@@ -242,7 +242,7 @@ td{position:relative}
 
 <div class="hdr">
   <div class="hdr-left">
-    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-08-25 23:21 기준</span></h1>
+    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-08-25 23:27 기준</span></h1>
   </div>
   <div class="hdr-r">
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
@@ -319,6 +319,9 @@ function renderWeather(){
   const keys = Object.keys(days).sort();
   if(keys.length === 0){ wrap.style.display='none'; return; }
   const todayStr = WEATHER.today || keys[0];
+  // 오늘(실제 날짜) 데이터가 아예 없으면(자정 임박 등) — 가장 빠른 날짜를 '오늘' 기준으로 승격
+  const refStr = days[todayStr] ? todayStr : keys[0];
+  window._weatherRefToday = refStr;  // renderWeatherHourly에서도 동일 기준 사용
   if(expandedWDay === undefined) expandedWDay = keys[0];  // 최초 로드시에만 "오늘"(또는 첫 데이터) 기본 오픈
   let h = '';
   keys.forEach((d) => {
@@ -327,7 +330,7 @@ function renderWeather(){
     const popCls = v.pop >= 60 ? 'high' : '';
     const sel = d === expandedWDay ? ' sel' : '';
     h += `<div class="wcard${sel}" onclick="toggleWDay('${d}')">
-      <div class="wd">${dayLabel(d, todayStr)} <span style="font-weight:400">${md}</span></div>
+      <div class="wd">${dayLabel(d, refStr)} <span style="font-weight:400">${md}</span></div>
       <div class="wi">${skyIcon(v.sky, v.pty)}</div>
       <div class="wt">${v.tmax ?? '-'}° <span class="lo">${v.tmin ?? '-'}°</span></div>
       <div class="wp ${popCls}">💧 ${v.pop}%</div>
@@ -351,9 +354,10 @@ function renderWeatherHourly(){
   if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
   panel.style.display='flex';
 
-  // 오늘 날짜가 펼쳐진 경우에만 현재 시각대 하이라이트 계산
+  // 오늘(승격 기준 포함) 날짜가 펼쳐진 경우에만 현재 시각대 하이라이트 계산
   let nowBucketKey = null;
-  if(expandedWDay === WEATHER.today){
+  const refToday = window._weatherRefToday || WEATHER.today;
+  if(expandedWDay === refToday){
     const curHour = new Date().getHours();
     const buckets = [0,3,6,9,12,15,18,21].filter(h=>h<=curHour);
     const nb = buckets.length ? Math.max(...buckets) : 0;
