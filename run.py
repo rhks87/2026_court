@@ -800,7 +800,6 @@ function renderWeather(){
   const todayStr = WEATHER.today || keys[0];
   // 오늘(실제 날짜) 데이터가 아예 없으면(자정 임박 등) — 가장 빠른 날짜를 '오늘' 기준으로 승격
   const refStr = days[todayStr] ? todayStr : keys[0];
-  window._weatherRefToday = refStr;  // renderWeatherHourly에서도 동일 기준 사용
   if(expandedWDay === undefined) expandedWDay = keys[0];  // 최초 로드시에만 "오늘"(또는 첫 데이터) 기본 오픈
   let h = '';
   keys.forEach((d) => {
@@ -833,10 +832,10 @@ function renderWeatherHourly(){
   if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
   panel.style.display='flex';
 
-  // 오늘(승격 기준 포함) 날짜가 펼쳐진 경우에만 현재 시각대 하이라이트 계산
+  // 진짜 오늘(실제 날짜)이 펼쳐진 경우에만 현재 시각대 하이라이트 계산
+  // — 라벨링용으로 승격된 날짜(refStr)에는 적용하지 않음: 그 날은 아직 시작도 안 된 미래라 '지금'이 없음
   let nowBucketKey = null;
-  const refToday = window._weatherRefToday || WEATHER.today;
-  if(expandedWDay === refToday){
+  if(expandedWDay === WEATHER.today){
     const curHour = new Date().getHours();
     const buckets = [0,3,6,9,12,15,18,21].filter(h=>h<=curHour);
     const nb = buckets.length ? Math.max(...buckets) : 0;
