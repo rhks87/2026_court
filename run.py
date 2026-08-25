@@ -555,14 +555,6 @@ td.empty{background:var(--hover);opacity:.45}
 td.past{opacity:.4}
 td.today{box-shadow:inset 0 0 0 2px var(--today-ring)}
 
-/* 완전히 지난 주 — 얇게 압축 */
-table.cal td.row-past{
-  height:18px!important;padding:2px 4px!important;
-  font-size:10px;color:var(--muted);text-align:right;
-  background:var(--hover);opacity:.55;vertical-align:middle
-}
-td.empty.row-past{background:var(--hover)}
-
 .dnum{font-size:11px;font-weight:700;margin-bottom:2px;  /* 날짜 숫자 작게 */
   padding:1px 3px;display:inline-block;border-radius:4px}
 .dnum.sun{color:var(--sun)}
@@ -660,13 +652,6 @@ td{position:relative}
   padding:9px 16px;border-radius:9px;font-weight:700;font-size:13px;
   font-family:inherit;cursor:pointer}
 
-.fab-filter{position:fixed;right:16px;bottom:20px;z-index:900;
-  width:48px;height:48px;border-radius:50%;border:none;
-  background:var(--accent);color:#fff;font-size:20px;
-  box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;
-  display:flex;align-items:center;justify-content:center}
-.fab-filter:active{filter:brightness(1.15)}
-
 @media(max-width:700px){
   table.cal td{height:120px;padding:4px 3px}
   .slot{font-size:10px;padding:3px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -677,6 +662,13 @@ td{position:relative}
   .sn-f{display:none}
   .sn-s{display:inline}
   .sn-tf{display:none}  /* 모바일: 전체 시간 숨김, sn-s가 대신 표시 */
+
+  /* 완전히 지난 주 — 모바일에서만 얇게 압축 (PC는 그대로 유지) */
+  table.cal tr.row-past td{height:18px!important;padding:2px 4px!important;overflow:hidden}
+  table.cal tr.row-past .day-wx,
+  table.cal tr.row-past .holi,
+  table.cal tr.row-past .slots{display:none}
+  table.cal tr.row-past .dnum{font-size:10px;margin:0}
 
   /* 모바일 헤더 한 줄 강제 */
   .hdr h1{font-size:15px}
@@ -700,7 +692,6 @@ td{position:relative}
   <span class="cb-txt" id="cbTxt"></span>
   <button onclick="goPending()">예약하러 가기 →</button>
 </div>
-<button class="fab-filter" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="필터로 이동">🔍</button>
 
 <div class="hdr">
   <div class="hdr-left">
@@ -1058,15 +1049,11 @@ function render(){
     }
     const rowPast = rowHasDay && !rowHasFuture;
 
-    html+='<tr>';
+    html+=`<tr class="${rowPast?'row-past':''}">`;
     for(let c=0;c<7;c++){
       const isBlank = (row===0&&c<sd) || day>td;
       if(isBlank){
-        html+=`<td class="empty${rowPast?' row-past':''}"></td>`;
-      } else if(rowPast){
-        // 완전히 지난 주 — 얇게 압축, 날짜 숫자만 표시
-        html+=`<td class="row-past">${day}</td>`;
-        day++;
+        html+='<td class="empty"></td>';
       } else {
         const ds=`${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
         const dt=new Date(y,m-1,day);
