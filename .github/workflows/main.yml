@@ -43,5 +43,16 @@ jobs:
             git rm --cached pending_notify.json > /dev/null
           fi
           git diff --staged --quiet || git commit -m "자동 갱신 $(date '+%Y-%m-%d %H:%M')"
-          git pull --rebase --autostash origin main
-          git push
+
+          # push 재시도 — 원격 충돌/GitHub 서버 일시 오류 대비 (최대 5회, 점점 늘어나는 대기시간)
+          for i in 1 2 3 4 5; do
+            git pull --rebase --autostash origin main
+            if git push; then
+              echo "push 성공 (시도 $i)"
+              exit 0
+            fi
+            echo "push 실패, 재시도 $i/5"
+            sleep $((i * 5))
+          done
+          echo "push 5회 모두 실패"
+          exit 1
