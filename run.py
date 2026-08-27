@@ -1,9 +1,12 @@
 """
-화성 테니스 빈 코트 캘린더 v0.6
-변경사항:
-  - 시간 단축버튼: 전체/오전/오후/저녁(18~) + 세부 2시간 버튼 연동
-  - 코트 필터 버튼 배경색 꽉 채우기
-  - 같은 그룹 = 완전 동일한 색
+동탄·죽미 코트 예약현황 v1.0
+주요 기능:
+  - 화성(왕배산/여울공원/금반저류지/돌모루/중동) + 오산(죽미실내/실외/시립) 통합 코트 조회
+  - 시간/코트 필터, 지난 주 자동 압축, 요일 헤더 고정
+  - 날씨: 단기예보(3일, 위젯+슬롯별 강수확률) + 중기예보(4~10일, 날짜 배지)
+  - 다크모드 자동 전환(OS 연동)
+  - 텔레그램 신규 빈자리 알림 (오픈 시각 반영, 조용한 시간대 보류, 코트별 그룹핑, 날씨 첨부)
+  - 모바일 2단계 탭(예약 이동 전 상세 확인)
 """
 import requests, json, time, os, calendar
 from datetime import datetime, timezone, timedelta, date
@@ -201,6 +204,73 @@ def fetch_weather():
     slots = {k: v for k, v in slots.items() if k.split("-")[0] in valid_dates}
     today_str = datetime.now(KST).strftime("%Y%m%d")  # 라벨링 기준 — API 응답 순서가 아닌 실제 오늘 날짜
     return {"base_date": base_date, "base_time": base_time, "today": today_str, "days": summary, "slots": slots}
+
+
+# ===== 중기예보 (기상청, 화성 지역 — 날짜 배지용, 4~10일차만) =====
+MID_REG_ID = "11B20604"  # 화성 (예보구역코드표에서 확인됨)
+MID_LAND_URL = "http://apis.data.go.kr/1360000/MidFcstInfoService/getMidLandFcst"
+MID_TA_URL   = "http://apis.data.go.kr/1360000/MidFcstInfoService/getMidTa"
+
+def fetch_midterm():
+    """
+    중기예보(4~10일차) 조회 → 날짜별 최저/최고기온 + 강수확률만 추출 (달력 날짜 배지 전용).
+    단기예보(3일)와 안 겹치게 4일차부터만 사용. 위젯에는 넣지 않음 (복잡도 방지).
+    실패 시 빈 dict 반환 — 실패해도 나머지 기능에 영향 없음.
+    """
+    if not KMA_SERVICE_KEY:
+        return {}
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    # 발표시각: 06:00 또는 18:00 중 가장 최근 발표
+    if now.hour >= 18:
+        base_dt = now.replace(hour=18, minute=0, second=0, microsecond=0)
+    elif now.hour >= 6:
+        base_dt = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    else:
+        base_dt = (now - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
+    tmFc = base_dt.strftime("%Y%m%d%H%M")
+
+    try:
+        r1 = requests.get(MID_LAND_URL, params={
+            "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 10,
+            "dataType": "JSON", "regId": MID_REG_ID, "tmFc": tmFc,
+        }, timeout=15)
+        r2 = requests.get(MID_TA_URL, params={
+            "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 10,
+            "dataType": "JSON", "regId": MID_REG_ID, "tmFc": tmFc,
+        }, timeout=15)
+        land_data = r1.json()
+        ta_data = r2.json()
+        if land_data["response"]["header"]["resultCode"] != "00":
+            print(f"  [!] 중기육상예보 오류: {land_data['response']['header']['resultMsg']}")
+            return {}
+        if ta_data["response"]["header"]["resultCode"] != "00":
+            print(f"  [!] 중기기온 오류: {ta_data['response']['header']['resultMsg']}")
+            return {}
+        land = land_data["response"]["body"]["items"]["item"][0]
+        ta = ta_data["response"]["body"]["items"]["item"][0]
+    except Exception as e:
+        print(f"  [!] 중기예보 조회 실패: {e}")
+        return {}
+
+    result = {}
+    base_date = base_dt.date()
+    for n in range(4, 11):  # 4~10일차
+        d = base_date + timedelta(days=n)
+        dkey = d.strftime("%Y%m%d")
+        if n <= 7:
+            pop_am, pop_pm = land.get(f"rnSt{n}Am"), land.get(f"rnSt{n}Pm")
+            pops = [p for p in (pop_am, pop_pm) if p is not None]
+            pop = max(pops) if pops else None
+            wf = land.get(f"wf{n}Pm") or land.get(f"wf{n}Am")  # 날씨 텍스트(맑음/구름많음/비 등) — 오후 우선
+        else:
+            pop = land.get(f"rnSt{n}")
+            wf = land.get(f"wf{n}")
+        tmin, tmax = ta.get(f"taMin{n}"), ta.get(f"taMax{n}")
+        if tmin is None and tmax is None and pop is None:
+            continue
+        result[dkey] = {"tmin": tmin, "tmax": tmax, "pop": pop, "wf": wf}
+    return result
 
 
 # ===== 텔레그램 신규 빈자리 알림 =====
@@ -459,6 +529,18 @@ def main():
 
     # 신규 빈자리 텔레그램 알림 (날씨 정보 함께 전달)
     notify_new_slots(result, weather)
+
+    # 중기예보 (4~10일차, 달력 배지 전용 — 위젯에는 영향 없음)
+    print(f"  [중기예보] 화성 4~10일차 조회 중...", end=" ")
+    try:
+        midterm = fetch_midterm()
+        if midterm:
+            weather["days_mid"] = midterm
+            print(f"{len(midterm)}일치 확보")
+        else:
+            print("생략")
+    except Exception as e:
+        print(f"실패: {e}")
 
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
@@ -869,10 +951,22 @@ function weatherForSlotTime(ds, beginHm){
   const tKey = `${dKey}-${String(nearest).padStart(2,'0')}00`;
   return wslots[tKey] || null;
 }
+/* 중기예보 날씨 텍스트(맑음/구름많음/흐림/비 등) → 아이콘 */
+function wfIcon(wf){
+  if(!wf) return '☁️';
+  if(wf.includes('비') || wf.includes('소나기')) return '🌧️';
+  if(wf.includes('눈')) return '❄️';
+  if(wf.includes('맑음')) return '☀️';
+  if(wf.includes('구름많') || wf.includes('구름조금')) return '⛅';
+  return '☁️';
+}
+
 function weatherForDate(ds){
   const days = (WEATHER && WEATHER.days) ? WEATHER.days : {};
   const key = ds.replace(/-/g, '');
-  return days[key] || null;
+  if(days[key]) return days[key];
+  const mid = (WEATHER && WEATHER.days_mid) ? WEATHER.days_mid : {};
+  return mid[key] || null;
 }
 const GH = {금반저류지:215, 왕배산:145, 여울공원:340, 돌모루:275, 죽미실내:25, 죽미실외:165, 시립:55, 중동:190};
 function groupColor(g){ return `hsl(${GH[g]??0},65%,50%)`; }
@@ -1096,7 +1190,7 @@ function render(){
         html+=`<td class="${cls}${holi?' holiday-bg':''}">`;
         const wx = weatherForDate(ds);
         if(wx){
-          const icon = skyIcon(wx.sky, wx.pty);
+          const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
           const rainTxt = wx.pop >= 70 ? ` 💧${wx.pop}%` : '';
           html+=`<div class="day-wx" title="최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%">${icon} ${wx.tmax}°${rainTxt}</div>`;
         }
@@ -1175,6 +1269,10 @@ function saveJson(){
 syncUI();
 render();
 renderWeather();
+
+// 시간대별 하이라이트가 실제 시간 흐름에 맞게 유지되도록 5분마다 재계산
+// (페이지를 계속 열어둔 채 안 새로고침해도 '지금' 표시가 stale해지지 않음)
+setInterval(renderWeatherHourly, 5 * 60 * 1000);
 </script>
 </body>
 </html>"""
