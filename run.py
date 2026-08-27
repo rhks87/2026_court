@@ -778,6 +778,10 @@ td{position:relative}
   table.cal tr.row-past .slots{display:none}
   table.cal tr.row-past .dnum{font-size:10px;margin:0}
 
+  /* 날짜 배지 — 모바일은 좁아서 아이콘만, 텍스트(온도/강수확률)는 숨김 */
+  .day-wx{font-size:12px;top:1px;right:1px}
+  .day-wx .dwx-txt{display:none}
+
   /* 모바일 헤더 한 줄 강제 */
   .hdr h1{font-size:15px}
   .hdr h1 em{font-size:9px;margin-left:3px}
@@ -917,19 +921,20 @@ function renderWeatherHourly(){
   if(!panel) return;
   if(!expandedWDay){ panel.innerHTML=''; panel.style.display='none'; return; }
   const wslots = (WEATHER && WEATHER.slots) ? WEATHER.slots : {};
-  const items = Object.keys(wslots).filter(k=>k.startsWith(expandedWDay)).sort();
-  if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
-  panel.style.display='flex';
+  let items = Object.keys(wslots).filter(k=>k.startsWith(expandedWDay)).sort();
 
-  // 진짜 오늘(실제 날짜)이 펼쳐진 경우에만 현재 시각대 하이라이트 계산
-  // — 라벨링용으로 승격된 날짜(refStr)에는 적용하지 않음: 그 날은 아직 시작도 안 된 미래라 '지금'이 없음
+  // 오늘 날짜면 이미 지난 시간대는 목록에서 제외 (현재 시각이 속한 구간부터만 표시)
   let nowBucketKey = null;
   if(expandedWDay === WEATHER.today){
     const curHour = new Date().getHours();
     const buckets = [0,3,6,9,12,15,18,21].filter(h=>h<=curHour);
     const nb = buckets.length ? Math.max(...buckets) : 0;
     nowBucketKey = `${expandedWDay}-${String(nb).padStart(2,'0')}00`;
+    items = items.filter(k => k >= nowBucketKey);
   }
+
+  if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
+  panel.style.display='flex';
 
   let h='';
   items.forEach(k=>{
@@ -1200,7 +1205,7 @@ function render(){
           const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
           const isRainIcon = icon === '🌧️' || icon === '❄️';
           const rainTxt = (isRainIcon || wx.pop >= 70) ? ` 💧${wx.pop}%` : '';
-          html+=`<div class="day-wx" title="최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%">${icon} ${wx.tmax}°${rainTxt}</div>`;
+          html+=`<div class="day-wx" title="최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%">${icon}<span class="dwx-txt"> ${wx.tmax}°${rainTxt}</span></div>`;
         }
         html+=`<div class="dnum ${dc}">${day}</div>`;
         if(holi) html+=`<div class="holi">${holi}</div>`;
