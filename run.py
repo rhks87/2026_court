@@ -220,7 +220,7 @@ def fetch_weather():
 
 
 # ===== 기상특보 (오늘 발효 중인 특보만, 배너용) =====
-WARN_AREA_CODE = "L1013200"  # 화성 (특보구역코드표에서 확인됨)
+WARN_AREA_CODE = "109"  # 서울/인천/경기도 (공식 가이드 첨부 지점코드표에서 확인됨 — 화성 포함)
 WARN_URL = "http://apis.data.go.kr/1360000/WthrWrnInfoService/getWthrWrnList"
 WARN_TEST_MODE = False  # 배너 화면 디자인 확인 완료 — 실제 특보만 표시
 
@@ -235,7 +235,7 @@ def fetch_warnings():
     try:
         r = requests.get(WARN_URL, params={
             "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 10,
-            "dataType": "JSON", "areaCode": WARN_AREA_CODE,
+            "dataType": "JSON", "stnId": WARN_AREA_CODE,
         }, timeout=15)
         data = r.json()
         if data["response"]["header"]["resultCode"] != "00":
@@ -245,6 +245,7 @@ def fetch_warnings():
         if isinstance(items, dict):
             items = [items]
         result = []
+        seen = set()  # 같은 특보가 갱신/재발표로 여러 번 찍혀도 한 번만 표시
         for it in items:
             title_raw = it.get("title", "")
             if "해제" in title_raw:
@@ -253,7 +254,11 @@ def fetch_warnings():
             short = title_raw.split("/")[-1].strip()
             if short.endswith("(*)"):
                 short = short[:-3].strip()
-            result.append({"title": short or title_raw})
+            title = short or title_raw
+            if title in seen:
+                continue
+            seen.add(title)
+            result.append({"title": title})
         return result
     except Exception as e:
         print(f"  [!] 기상특보 조회 실패: {e}")
@@ -1018,7 +1023,7 @@ function renderWarnings(){
   const list = (WEATHER && WEATHER.warnings) ? WEATHER.warnings : [];
   if(list.length === 0){ el.innerHTML = ''; return; }
   const titles = list.map(w => w.title).join(' · ');
-  el.innerHTML = `<div class="warn-banner">⚠️ 기상특보: ${titles}</div>`;
+  el.innerHTML = `<div class="warn-banner">⚠️ 기상특보(경기도): ${titles}</div>`;
 }
 
 let expandedWDay;  // undefined = 아직 초기화 안 됨 (최초 1회만 "오늘"로 기본 오픈)
