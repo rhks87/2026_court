@@ -243,6 +243,8 @@ def fetch_warnings():
         items = data["response"]["body"]["items"].get("item", [])
         if isinstance(items, dict):
             items = [items]
+        if items:
+            print(f"\n  [디버그] 특보 원본 첫 항목 필드 — {items[0]!r}")
         result = []
         for it in items:
             result.append({"title": it.get("t6", it.get("t1", "특보"))})
@@ -1283,8 +1285,9 @@ function render(){
         if(wx){
           const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
           const popCls = wx.pop >= 70 ? ' hi' : '';
+          const popTxt = wx.pop > 0 ? `<span class="dwx-pop${popCls}">💧${wx.pop}%</span>` : '';
           const wxTipTxt = `최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%`;
-          html+=`<div class="day-wx" title="${wxTipTxt}" onclick="showWxTip(event,'${wxTipTxt.replace(/'/g,"\\'")}' )">${icon}<span class="dwx-pop${popCls}">💧${wx.pop}%</span><span class="dwx-txt"> ${wx.tmax}°</span></div>`;
+          html+=`<div class="day-wx" title="${wxTipTxt}" onclick="showWxTip(event,'${wxTipTxt.replace(/'/g,"\\'")}' )">${icon}${popTxt}<span class="dwx-txt"> ${wx.tmax}°</span></div>`;
         }
         html+=`<div class="dnum ${dc}">${day}</div>`;
         if(holi) html+=`<div class="holi">${holi}</div>`;
