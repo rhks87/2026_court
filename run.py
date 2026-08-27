@@ -664,6 +664,15 @@ def main():
                     pass
         if WARN_TEST_MODE:  # 배너 화면 확인용 — 확인 끝나면 False로 바꾸세요
             warnings_list = warnings_list + [{"title": "[테스트] 폭염주의보"}]
+        # 출처(새로 받아온 것/캐시)와 무관하게 항상 마지막에 한 번 더 중복 제거
+        # (캐시가 예전 코드 시절에 저장된 경우, 그때 이미 중복이 들어있을 수 있어서)
+        _seen_titles = set()
+        _deduped = []
+        for w in warnings_list:
+            if w["title"] not in _seen_titles:
+                _seen_titles.add(w["title"])
+                _deduped.append(w)
+        warnings_list = _deduped
         weather["warnings"] = warnings_list
         print(f"{len(warnings_list)}건" if warnings_list else "없음")
     except Exception as e:
