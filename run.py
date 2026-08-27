@@ -249,6 +249,9 @@ def fetch_midterm():
             return {}
         land = land_data["response"]["body"]["items"]["item"][0]
         ta = ta_data["response"]["body"]["items"]["item"][0]
+        # 디버그: 3일차 필드가 실제로 오는지 확인 (원인 파악용, 추후 제거 가능)
+        print(f"\n  [디버그] 3일차 원본값 — rnSt3Am={land.get('rnSt3Am')!r} rnSt3Pm={land.get('rnSt3Pm')!r} "
+              f"wf3Am={land.get('wf3Am')!r} taMin3={ta.get('taMin3')!r} taMax3={ta.get('taMax3')!r}")
     except Exception as e:
         print(f"  [!] 중기예보 조회 실패: {e}")
         return {}
