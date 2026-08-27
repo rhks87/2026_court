@@ -255,7 +255,12 @@ def fetch_midterm():
 
     result = {}
     base_date = base_dt.date()
-    for n in range(3, 11):  # 3~10일차 — 단기예보(오늘~+2일)와 정확히 이어지도록 +3일부터 시작
+    real_today = now.date()
+    # 발표일(base_date)과 실제 오늘이 다를 수 있음(자정~06시 사이엔 어제 18시 발표분을 씀) —
+    # 항상 '실제 오늘+3일'부터 시작하도록 보정 (그렇지 않으면 그 시간대에 하루가 통째로 빠짐)
+    start_n = 3 + (real_today - base_date).days
+    end_n = min(10, start_n + 7)  # API가 최대 10일차까지만 제공
+    for n in range(start_n, end_n + 1):
         d = base_date + timedelta(days=n)
         dkey = d.strftime("%Y%m%d")
         if n <= 7:
