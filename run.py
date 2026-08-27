@@ -219,6 +219,39 @@ def fetch_weather():
             "days": summary, "slots": slots, "extra_days": extra_days}
 
 
+# ===== 기상특보 (오늘 발효 중인 특보만, 배너용) =====
+WARN_AREA_CODE = "L1013200"  # 화성 (특보구역코드표에서 확인됨)
+WARN_URL = "http://apis.data.go.kr/1360000/WthrWrnInfoService/getWthrWrnList"
+WARN_TEST_MODE = True  # 배너 화면 디자인 확인용 — 확인 끝나면 False로 변경
+
+def fetch_warnings():
+    """
+    현재 발효 중인 기상특보 조회 (낙뢰/폭염/강풍 등 — 강수확률로는 안 잡히는 위험 정보).
+    실패 시 빈 리스트 반환 — 실패해도 나머지 기능에 영향 없음.
+    """
+    if not KMA_SERVICE_KEY:
+        return []
+    try:
+        r = requests.get(WARN_URL, params={
+            "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 10,
+            "dataType": "JSON", "areaCode": WARN_AREA_CODE,
+        }, timeout=15)
+        data = r.json()
+        if data["response"]["header"]["resultCode"] != "00":
+            print(f"  [!] 기상특보 오류: {data['response']['header']['resultMsg']}")
+            return []
+        items = data["response"]["body"]["items"].get("item", [])
+        if isinstance(items, dict):
+            items = [items]
+        result = []
+        for it in items:
+            result.append({"title": it.get("t6", it.get("t1", "특보"))})
+        return result
+    except Exception as e:
+        print(f"  [!] 기상특보 조회 실패: {e}")
+        return []
+
+
 # ===== 중기예보 (기상청, 화성 지역 — 날짜 배지용, 3~10일차만) =====
 MID_REG_ID = "11B20604"  # 화성 (예보구역코드표에서 확인됨)
 MID_LAND_URL = "http://apis.data.go.kr/1360000/MidFcstInfoService/getMidLandFcst"
@@ -566,6 +599,17 @@ def main():
     except Exception as e:
         print(f"실패: {e}")
 
+    # 기상특보 (오늘 발효 중, 배너용 — 시험 적용)
+    print(f"  [특보] 조회 중...", end=" ")
+    try:
+        warnings_list = fetch_warnings()
+        if WARN_TEST_MODE:  # 배너 화면 확인용 — 확인 끝나면 False로 바꾸세요
+            warnings_list = warnings_list + [{"title": "[테스트] 폭염주의보"}]
+        weather["warnings"] = warnings_list
+        print(f"{len(warnings_list)}건" if warnings_list else "없음")
+    except Exception as e:
+        print(f"실패: {e}")
+
     ts = now.strftime("%Y-%m-%d %H:%M")
     html = (HTML
             .replace("__DATA__",  json.dumps(result, ensure_ascii=False))
@@ -701,7 +745,8 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 [data-theme=dark] td.holiday-bg{background:rgba(248,113,113,.1)!important}
 
 .day-wx{position:absolute;top:2px;right:3px;font-size:10px;font-weight:700;
-  color:var(--muted);white-space:nowrap;line-height:1}
+  color:var(--muted);white-space:nowrap;line-height:1;cursor:pointer}
+.day-wx .dwx-pop.hi{color:var(--sat);font-weight:800}
 td{position:relative}
 
 .slots{display:grid;grid-template-columns:1fr 1fr;gap:3px;overflow:hidden}
@@ -739,6 +784,11 @@ td{position:relative}
 /* 날씨 요약 카드 */
 .weather-wrap{display:flex;gap:8px;margin-top:12px;overflow-x:auto;
   -webkit-overflow-scrolling:touch;touch-action:pan-x}
+
+.warn-banner{background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;
+  border-radius:10px;padding:10px 14px;margin-top:12px;font-size:13px;
+  font-weight:700;display:flex;align-items:center;gap:8px}
+[data-theme=dark] .warn-banner{background:#3f1d1d;border-color:#7f1d1d;color:#fca5a5}
 .wcard{flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
   border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow);cursor:pointer}
 .wcard.sel{box-shadow:0 0 0 2px var(--accent)}
@@ -875,6 +925,7 @@ td{position:relative}
 
 <div class="weather-wrap" id="weatherWrap"></div>
 <div class="weather-hourly" id="weatherHourly" style="display:none"></div>
+<div id="warnBanner"></div>
 
 
 <script>
@@ -904,6 +955,16 @@ function wDayName(dateStr){
   const y=+dateStr.slice(0,4), m=+dateStr.slice(4,6)-1, d=+dateStr.slice(6,8);
   const dw = new Date(y,m,d).getDay();  // 0=일 1=월 ... 6=토
   return "월화수목금토일"[(dw+6)%7];
+}
+
+/* 기상특보 배너 — 발효 중인 특보가 있을 때만 표시 */
+function renderWarnings(){
+  const el = document.getElementById('warnBanner');
+  if(!el) return;
+  const list = (WEATHER && WEATHER.warnings) ? WEATHER.warnings : [];
+  if(list.length === 0){ el.innerHTML = ''; return; }
+  const titles = list.map(w => w.title).join(' · ');
+  el.innerHTML = `<div class="warn-banner">⚠️ 기상특보: ${titles}</div>`;
 }
 
 let expandedWDay;  // undefined = 아직 초기화 안 됨 (최초 1회만 "오늘"로 기본 오픈)
@@ -1221,9 +1282,9 @@ function render(){
         const wx = weatherForDate(ds);
         if(wx){
           const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
-          const isRainIcon = icon === '🌧️' || icon === '❄️';
-          const rainTxt = (isRainIcon || wx.pop >= 70) ? ` 💧${wx.pop}%` : '';
-          html+=`<div class="day-wx" title="최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%">${icon}<span class="dwx-txt"> ${wx.tmax}°${rainTxt}</span></div>`;
+          const popCls = wx.pop >= 70 ? ' hi' : '';
+          const wxTipTxt = `최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%`;
+          html+=`<div class="day-wx" title="${wxTipTxt}" onclick="showWxTip(event,'${wxTipTxt.replace(/'/g,"\\'")}' )">${icon}<span class="dwx-pop${popCls}">💧${wx.pop}%</span><span class="dwx-txt"> ${wx.tmax}°</span></div>`;
         }
         html+=`<div class="dnum ${dc}">${day}</div>`;
         if(holi) html+=`<div class="holi">${holi}</div>`;
@@ -1245,6 +1306,14 @@ function showTip(e,txt){tip.textContent=txt;tip.style.opacity='1';moveTip(e);}
 document.addEventListener('mousemove',moveTip);
 function moveTip(e){tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY-30)+'px';}
 function hideTip(){tip.style.opacity='0';}
+
+/* 날짜 배지(day-wx) — title 속성은 모바일 터치에서 안 뜨므로, 탭하면 잠깐 표시 */
+function showWxTip(e, txt){
+  e.stopPropagation();
+  showTip(e, txt);
+  clearTimeout(window._wxTipTimer);
+  window._wxTipTimer = setTimeout(hideTip, 2500);
+}
 
 /* 모바일(터치, hover 불가) 전용 2단계 탭: 1차=상세보기, 2차=이동 */
 const touchMode = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
@@ -1293,6 +1362,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e=>
 syncUI();
 render();
 renderWeather();
+renderWarnings();
 
 // 시간대별 하이라이트가 실제 시간 흐름에 맞게 유지되도록 5분마다 재계산
 // (페이지를 계속 열어둔 채 안 새로고침해도 '지금' 표시가 stale해지지 않음)
