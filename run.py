@@ -227,10 +227,11 @@ WARN_TEST_MODE = False  # 배너 화면 디자인 확인 완료 — 실제 특�
 def fetch_warnings():
     """
     현재 발효 중인 기상특보 조회 (낙뢰/폭염/강풍 등 — 강수확률로는 안 잡히는 위험 정보).
-    실패 시 빈 리스트 반환 — 실패해도 나머지 기능에 영향 없음.
+    실패 시 None 반환, 정상 조회인데 특보가 없으면 빈 리스트([]) 반환 — 이 둘을 구분해야
+    호출부에서 "실패라서 캐시로 대체" vs "정상인데 특보 없음"을 올바르게 판단 가능.
     """
     if not KMA_SERVICE_KEY:
-        return []
+        return None
     try:
         r = requests.get(WARN_URL, params={
             "serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 10,
@@ -239,7 +240,7 @@ def fetch_warnings():
         data = r.json()
         if data["response"]["header"]["resultCode"] != "00":
             print(f"  [!] 기상특보 오류: {data['response']['header']['resultMsg']}")
-            return []
+            return None
         items = data["response"]["body"]["items"].get("item", [])
         if isinstance(items, dict):
             items = [items]
@@ -256,7 +257,7 @@ def fetch_warnings():
         return result
     except Exception as e:
         print(f"  [!] 기상특보 조회 실패: {e}")
-        return []
+        return None
 
 
 # ===== 중기예보 (기상청, 화성 지역 — 날짜 배지용, 3~10일차만) =====
@@ -590,8 +591,29 @@ def main():
 
     # 중기예보 (3~10일차, 달력 배지 전용 — 위젯에는 영향 없음)
     print(f"  [중기예보] 화성 3~10일차 조회 중...", end=" ")
+    MID_CACHE_FILE = "midterm_cache.json"
     try:
         midterm = fetch_midterm()
+        if midterm:
+            try:
+                with open(MID_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(midterm, f, ensure_ascii=False)
+            except Exception:
+                pass
+            print(f"{len(midterm)}일치 확보", end="")
+        else:
+            # 조회 실패 — 직전 성공 데이터로 대체 (단기예보와 동일한 안전장치)
+            if os.path.exists(MID_CACHE_FILE):
+                try:
+                    with open(MID_CACHE_FILE, encoding="utf-8") as f:
+                        midterm = json.load(f)
+                    print(f"조회 실패 — 직전 데이터로 대체 ({len(midterm)}일치)", end="")
+                except Exception:
+                    midterm = {}
+                    print("조회 실패, 캐시도 손상됨", end="")
+            else:
+                print("조회 실패, 캐시 없음", end="")
+
         weather["days_mid"] = {}
         # 단기예보에서 3일 넘게 실제로 받아온 날짜가 있으면 우선 사용 (sky/pty가 더 정확함)
         extra = weather.get("extra_days", {})
@@ -602,14 +624,39 @@ def main():
             for dkey, dval in midterm.items():
                 weather["days_mid"].setdefault(dkey, dval)
         weather.pop("extra_days", None)  # 배지에는 days_mid로 통일, 원본은 정리
-        print(f"{len(weather['days_mid'])}일치 확보 (단기예보 보완 {len(extra)}일 포함)")
+        print(f" / 최종 {len(weather['days_mid'])}일치 (단기예보 보완 {len(extra)}일 포함)")
     except Exception as e:
         print(f"실패: {e}")
 
     # 기상특보 (오늘 발효 중, 배너용 — 시험 적용)
     print(f"  [특보] 조회 중...", end=" ")
+    WARN_CACHE_FILE = "warn_cache.json"
+    WARN_CACHE_MAX_AGE_MIN = 60  # 이보다 오래된 캐시는 안 씀(해제됐을 위험이 커짐)
     try:
         warnings_list = fetch_warnings()
+        if warnings_list is not None:
+            # 정상 조회 (특보가 있든 없든) — 캐시 갱신 (저장 시각도 함께 기록)
+            try:
+                with open(WARN_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"saved_at": now.isoformat(), "items": warnings_list}, f, ensure_ascii=False)
+            except Exception:
+                pass
+        else:
+            # 조회 실패 — 캐시가 너무 오래되지 않았을 때만 대체 (해제됐는데 계속 뜨는 것 방지)
+            warnings_list = []
+            if os.path.exists(WARN_CACHE_FILE):
+                try:
+                    with open(WARN_CACHE_FILE, encoding="utf-8") as f:
+                        cache = json.load(f)
+                    saved_at = datetime.fromisoformat(cache["saved_at"])
+                    age_min = (now - saved_at).total_seconds() / 60
+                    if age_min <= WARN_CACHE_MAX_AGE_MIN:
+                        warnings_list = cache["items"]
+                        print(f"조회 실패 — {age_min:.0f}분 전 데이터로 대체,", end=" ")
+                    else:
+                        print(f"조회 실패 — 캐시가 {age_min:.0f}분 전으로 너무 오래돼 생략,", end=" ")
+                except Exception:
+                    pass
         if WARN_TEST_MODE:  # 배너 화면 확인용 — 확인 끝나면 False로 바꾸세요
             warnings_list = warnings_list + [{"title": "[테스트] 폭염주의보"}]
         weather["warnings"] = warnings_list
