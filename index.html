@@ -117,7 +117,6 @@ td.holiday-bg{background:rgba(239,68,68,.07)!important}
 
 .day-wx{position:absolute;top:2px;right:3px;font-size:10px;font-weight:700;
   color:var(--muted);white-space:nowrap;line-height:1;cursor:pointer}
-.day-wx .dwx-pop.hi{color:var(--sat);font-weight:800}
 td{position:relative}
 
 .slots{display:grid;grid-template-columns:1fr 1fr;gap:3px;overflow:hidden}
@@ -252,7 +251,7 @@ td{position:relative}
 
 <div class="hdr">
   <div class="hdr-left">
-    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-08-28 08:40 기준</span></h1>
+    <h1>🎾 동탄·죽미 코트 예약현황 <span class="update-time">2026-08-28 08:44 기준</span></h1>
   </div>
   <div class="hdr-r">
     <button class="btn icon" onclick="toggleTheme()">🌙</button>
@@ -582,8 +581,20 @@ function buildSlots(slots,ds){
     const sn=shortNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const wx = weatherForSlotTime(ds, s.begin);
-    const tipFull = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
-    const rainMark = (wx && wx.pop >= 70) ? ' ☔' : '';
+    let tipFull = tip2;
+    let rainMark = '';
+    if(wx){
+      // 단기예보 범위(3일) — 해당 시간대 정확한 강수확률
+      tipFull = `${tip2}  💧${wx.pop ?? '-'}%`;
+      rainMark = wx.pop >= 70 ? ' ☔' : '';
+    } else {
+      // 중기예보 범위(4일~) — 시간대별 데이터는 없어서 하루 단위로 대체 표시
+      const dwx = weatherForDate(ds);
+      if(dwx){
+        tipFull = `${tip2}  (하루) 💧${dwx.pop}% 최고${dwx.tmax}°`;
+        rainMark = dwx.pop >= 70 ? ' ☔' : '';
+      }
+    }
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
@@ -653,10 +664,8 @@ function render(){
         const wx = weatherForDate(ds);
         if(wx){
           const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
-          const popCls = wx.pop >= 70 ? ' hi' : '';
-          const popTxt = wx.pop > 0 ? `<span class="dwx-pop${popCls}">💧${wx.pop}%</span>` : '';
           const wxTipTxt = `최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%`;
-          html+=`<div class="day-wx" title="${wxTipTxt}" onclick="showWxTip(event,'${wxTipTxt.replace(/'/g,"\\'")}' )">${icon}${popTxt}<span class="dwx-txt"> ${wx.tmax}°</span></div>`;
+          html+=`<div class="day-wx" title="${wxTipTxt}" onclick="showWxTip(event,'${wxTipTxt.replace(/'/g,"\\'")}' )">${icon}<span class="dwx-txt"> ${wx.tmax}°<span class="dwx-pop"> 💧${wx.pop}%</span></span></div>`;
         }
         html+=`<div class="dnum ${dc}">${day}</div>`;
         if(holi) html+=`<div class="holi">${holi}</div>`;
