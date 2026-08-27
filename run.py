@@ -1075,14 +1075,14 @@ function renderWeatherHourly(){
   const wslots = (WEATHER && WEATHER.slots) ? WEATHER.slots : {};
   let items = Object.keys(wslots).filter(k=>k.startsWith(expandedWDay)).sort();
 
-  // 오늘 날짜면 이미 지난 시간대는 목록에서 제외 (현재 시각이 속한 구간부터만 표시)
+  // 오늘 날짜면 이미 지난 시간대는 목록에서 제외, '지금'은 실제 현재 시각(hour) 그대로 하이라이트
+  // — 데이터가 3시간 단위가 아니라 실제로 매시간 존재하므로, 3시간 버킷으로 근사하지 않고
+  //   실제 존재하는 키 중 현재 시각과 정확히 일치(또는 그 이후 첫 값)하는 것을 사용
   let nowBucketKey = null;
   if(expandedWDay === WEATHER.today){
     const curHour = new Date().getHours();
-    const buckets = [0,3,6,9,12,15,18,21].filter(h=>h<=curHour);
-    const nb = buckets.length ? Math.max(...buckets) : 0;
-    nowBucketKey = `${expandedWDay}-${String(nb).padStart(2,'0')}00`;
-    items = items.filter(k => k >= nowBucketKey);
+    items = items.filter(k => parseInt(k.split('-')[1].slice(0,2)) >= curHour);
+    if(items.length) nowBucketKey = items[0];  // 남은 것 중 가장 이른 시간 = 지금 시각(또는 그 다음으로 가까운 것)
   }
 
   if(items.length === 0){ panel.innerHTML=''; panel.style.display='none'; return; }
