@@ -243,11 +243,16 @@ def fetch_warnings():
         items = data["response"]["body"]["items"].get("item", [])
         if isinstance(items, dict):
             items = [items]
-        if items:
-            print(f"\n  [디버그] 특보 원본 첫 항목 필드 — {items[0]!r}")
         result = []
         for it in items:
-            result.append({"title": it.get("t6", it.get("t1", "특보"))})
+            title_raw = it.get("title", "")
+            if "해제" in title_raw:
+                continue  # 이미 해제된 특보는 배너에 표시 안 함(발효 중인 것만)
+            # "[특보] 제08-98호 : ... / 호우주의보 발표 (*)" → "호우주의보 발표"만 간결하게 추출
+            short = title_raw.split("/")[-1].strip()
+            if short.endswith("(*)"):
+                short = short[:-3].strip()
+            result.append({"title": short or title_raw})
         return result
     except Exception as e:
         print(f"  [!] 기상특보 조회 실패: {e}")
