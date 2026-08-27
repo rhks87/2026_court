@@ -206,15 +206,15 @@ def fetch_weather():
     return {"base_date": base_date, "base_time": base_time, "today": today_str, "days": summary, "slots": slots}
 
 
-# ===== 중기예보 (기상청, 화성 지역 — 날짜 배지용, 4~10일차만) =====
+# ===== 중기예보 (기상청, 화성 지역 — 날짜 배지용, 3~10일차만) =====
 MID_REG_ID = "11B20604"  # 화성 (예보구역코드표에서 확인됨)
 MID_LAND_URL = "http://apis.data.go.kr/1360000/MidFcstInfoService/getMidLandFcst"
 MID_TA_URL   = "http://apis.data.go.kr/1360000/MidFcstInfoService/getMidTa"
 
 def fetch_midterm():
     """
-    중기예보(4~10일차) 조회 → 날짜별 최저/최고기온 + 강수확률만 추출 (달력 날짜 배지 전용).
-    단기예보(3일)와 안 겹치게 4일차부터만 사용. 위젯에는 넣지 않음 (복잡도 방지).
+    중기예보(3~10일차) 조회 → 날짜별 최저/최고기온 + 강수확률만 추출 (달력 날짜 배지 전용).
+    단기예보(오늘~+2일)와 정확히 이어지는 +3일부터 시작. 위젯에는 넣지 않음 (복잡도 방지).
     실패 시 빈 dict 반환 — 실패해도 나머지 기능에 영향 없음.
     """
     if not KMA_SERVICE_KEY:
@@ -255,7 +255,7 @@ def fetch_midterm():
 
     result = {}
     base_date = base_dt.date()
-    for n in range(4, 11):  # 4~10일차
+    for n in range(3, 11):  # 3~10일차 — 단기예보(오늘~+2일)와 정확히 이어지도록 +3일부터 시작
         d = base_date + timedelta(days=n)
         dkey = d.strftime("%Y%m%d")
         if n <= 7:
@@ -531,7 +531,7 @@ def main():
     notify_new_slots(result, weather)
 
     # 중기예보 (4~10일차, 달력 배지 전용 — 위젯에는 영향 없음)
-    print(f"  [중기예보] 화성 4~10일차 조회 중...", end=" ")
+    print(f"  [중기예보] 화성 3~10일차 조회 중...", end=" ")
     try:
         midterm = fetch_midterm()
         if midterm:
@@ -871,6 +871,13 @@ function dayLabel(dateStr, todayStr){
   return `${dateStr.slice(4,6)}/${dateStr.slice(6,8)}`;
 }
 
+/* 날짜(YYYYMMDD) → 요일(월화수목금토일) */
+function wDayName(dateStr){
+  const y=+dateStr.slice(0,4), m=+dateStr.slice(4,6)-1, d=+dateStr.slice(6,8);
+  const dw = new Date(y,m,d).getDay();  // 0=일 1=월 ... 6=토
+  return "월화수목금토일"[(dw+6)%7];
+}
+
 let expandedWDay;  // undefined = 아직 초기화 안 됨 (최초 1회만 "오늘"로 기본 오픈)
 
 function renderWeather(){
@@ -890,7 +897,7 @@ function renderWeather(){
     const popCls = v.pop >= 60 ? 'high' : '';
     const sel = d === expandedWDay ? ' sel' : '';
     h += `<div class="wcard${sel}" onclick="toggleWDay('${d}')">
-      <div class="wd">${dayLabel(d, refStr)} <span style="font-weight:400">${md}</span></div>
+      <div class="wd">${dayLabel(d, refStr)} <span style="font-weight:400">${md}(${wDayName(d)})</span></div>
       <div class="wi">${skyIcon(v.sky, v.pty)}</div>
       <div class="wt">${v.tmax ?? '-'}° <span class="lo">${v.tmin ?? '-'}°</span></div>
       <div class="wp ${popCls}">💧 ${v.pop}%</div>
@@ -1191,7 +1198,8 @@ function render(){
         const wx = weatherForDate(ds);
         if(wx){
           const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
-          const rainTxt = wx.pop >= 70 ? ` 💧${wx.pop}%` : '';
+          const isRainIcon = icon === '🌧️' || icon === '❄️';
+          const rainTxt = (isRainIcon || wx.pop >= 70) ? ` 💧${wx.pop}%` : '';
           html+=`<div class="day-wx" title="최고 ${wx.tmax}° / 최저 ${wx.tmin}° · 강수확률 ${wx.pop}%">${icon} ${wx.tmax}°${rainTxt}</div>`;
         }
         html+=`<div class="dnum ${dc}">${day}</div>`;
