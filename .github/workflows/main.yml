@@ -44,15 +44,21 @@ jobs:
           fi
           git diff --staged --quiet || git commit -m "자동 갱신 $(date '+%Y-%m-%d %H:%M')"
 
-          # push 재시도 — 원격 충돌/GitHub 서버 일시 오류 대비 (최대 5회, 점점 늘어나는 대기시간)
+          # push 재시도 — 자동 생성 파일(index.html 등)은 충돌 시 항상 방금 만든
+          # 최신 버전을 우선(-X ours)해서 사람 개입 없이 자동 해결
           for i in 1 2 3 4 5; do
-            git pull --rebase --autostash origin main
-            if git push; then
-              echo "push 성공 (시도 $i)"
-              exit 0
+            git fetch origin main
+            if git merge -X ours --no-edit origin/main; then
+              if git push; then
+                echo "push 성공 (시도 $i)"
+                exit 0
+              fi
+            else
+              echo "merge 실패 — abort 후 재시도"
+              git merge --abort || true
             fi
-            echo "push 실패, 재시도 $i/5"
+            echo "재시도 $i/5"
             sleep $((i * 5))
           done
-          echo "push 5회 모두 실패"
+          echo "5회 모두 실패"
           exit 1
