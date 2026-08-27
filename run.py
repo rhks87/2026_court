@@ -222,7 +222,7 @@ def fetch_weather():
 # ===== 기상특보 (오늘 발효 중인 특보만, 배너용) =====
 WARN_AREA_CODE = "L1013200"  # 화성 (특보구역코드표에서 확인됨)
 WARN_URL = "http://apis.data.go.kr/1360000/WthrWrnInfoService/getWthrWrnList"
-WARN_TEST_MODE = True  # 배너 화면 디자인 확인용 — 확인 끝나면 False로 변경
+WARN_TEST_MODE = False  # 배너 화면 디자인 확인 완료 — 실제 특보만 표시
 
 def fetch_warnings():
     """
