@@ -191,7 +191,8 @@ def fetch_weather():
             by_date[d]["pty"].append(val); slots[f"{d}-{t}"]["pty"] = val
 
     summary = {}
-    for d, v in sorted(by_date.items())[:3]:  # 오늘+모레까지 최대 3일
+    sorted_days = sorted(by_date.items())
+    for d, v in sorted_days[:3]:  # 위젯용: 항상 3일 고정
         summary[d] = {
             "tmin": round(min(v["tmp"])) if v["tmp"] else None,
             "tmax": round(max(v["tmp"])) if v["tmp"] else None,
@@ -199,11 +200,23 @@ def fetch_weather():
             "sky":  max(set(v["sky"]), key=v["sky"].count) if v["sky"] else "1",
             "pty":  "1" if any(p != "0" for p in v["pty"]) else "0",
         }
-    # 3일 범위 밖 슬롯 제거 (용량 절약)
+    # 위젯 3일 넘게 실제로 받아온 날짜가 있으면(발표시각에 따라 종종 있음) 버리지 않고
+    # 배지 전용으로 보관 — 중기예보(보통 +3일부터)와의 빈틈을 자연스럽게 메움
+    extra_days = {}
+    for d, v in sorted_days[3:]:
+        extra_days[d] = {
+            "tmin": round(min(v["tmp"])) if v["tmp"] else None,
+            "tmax": round(max(v["tmp"])) if v["tmp"] else None,
+            "pop":  max(v["pop"]) if v["pop"] else 0,
+            "sky":  max(set(v["sky"]), key=v["sky"].count) if v["sky"] else "1",
+            "pty":  "1" if any(p != "0" for p in v["pty"]) else "0",
+        }
+    # 슬롯(시간대별)은 위젯 3일 범위 밖은 제거 (용량 절약) — extra_days는 날짜 배지에만 쓰이므로 슬롯 불필요
     valid_dates = set(summary.keys())
     slots = {k: v for k, v in slots.items() if k.split("-")[0] in valid_dates}
     today_str = datetime.now(KST).strftime("%Y%m%d")  # 라벨링 기준 — API 응답 순서가 아닌 실제 오늘 날짜
-    return {"base_date": base_date, "base_time": base_time, "today": today_str, "days": summary, "slots": slots}
+    return {"base_date": base_date, "base_time": base_time, "today": today_str,
+            "days": summary, "slots": slots, "extra_days": extra_days}
 
 
 # ===== 중기예보 (기상청, 화성 지역 — 날짜 배지용, 3~10일차만) =====
@@ -538,15 +551,21 @@ def main():
     # 신규 빈자리 텔레그램 알림 (날씨 정보 함께 전달)
     notify_new_slots(result, weather)
 
-    # 중기예보 (4~10일차, 달력 배지 전용 — 위젯에는 영향 없음)
+    # 중기예보 (3~10일차, 달력 배지 전용 — 위젯에는 영향 없음)
     print(f"  [중기예보] 화성 3~10일차 조회 중...", end=" ")
     try:
         midterm = fetch_midterm()
+        weather["days_mid"] = {}
+        # 단기예보에서 3일 넘게 실제로 받아온 날짜가 있으면 우선 사용 (sky/pty가 더 정확함)
+        extra = weather.get("extra_days", {})
+        if extra:
+            weather["days_mid"].update(extra)
+        # 중기예보는 이미 위에서 채운 날짜와 안 겹치는 것만 추가
         if midterm:
-            weather["days_mid"] = midterm
-            print(f"{len(midterm)}일치 확보")
-        else:
-            print("생략")
+            for dkey, dval in midterm.items():
+                weather["days_mid"].setdefault(dkey, dval)
+        weather.pop("extra_days", None)  # 배지에는 days_mid로 통일, 원본은 정리
+        print(f"{len(weather['days_mid'])}일치 확보 (단기예보 보완 {len(extra)}일 포함)")
     except Exception as e:
         print(f"실패: {e}")
 
