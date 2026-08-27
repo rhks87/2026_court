@@ -262,9 +262,6 @@ def fetch_midterm():
             return {}
         land = land_data["response"]["body"]["items"]["item"][0]
         ta = ta_data["response"]["body"]["items"]["item"][0]
-        # 디버그: 3일차 필드가 실제로 오는지 확인 (원인 파악용, 추후 제거 가능)
-        print(f"\n  [디버그] 3일차 원본값 — rnSt3Am={land.get('rnSt3Am')!r} rnSt3Pm={land.get('rnSt3Pm')!r} "
-              f"wf3Am={land.get('wf3Am')!r} taMin3={ta.get('taMin3')!r} taMax3={ta.get('taMax3')!r}")
     except Exception as e:
         print(f"  [!] 중기예보 조회 실패: {e}")
         return {}
@@ -1016,11 +1013,6 @@ function shortNm(c){
   const m={금반저류지:'금반',왕배산:'왕배산',여울공원:'여울',돌모루:'돌모루',죽미실내:'죽미(내)',죽미실외:'죽미(외)',시립:'시립',중동:'중동'};
   return (m[c.group]||c.group)+n;
 }
-function mobileNm(c){
-  const n=(c.name.match(/(\d+)번/)||[])[1]||'';
-  const m={금반저류지:'금',왕배산:'왕',여울공원:'여',돌모루:'돌',죽미실내:'죽내',죽미실외:'죽외',시립:'시',중동:'중'};
-  return (m[c.group]||c.group)+n+'번';
-}
 
 const HOLI={
   /* 2026년 확정 공휴일 */
@@ -1156,7 +1148,6 @@ function buildSlots(slots,ds){
   vis.forEach(s=>{
     const col=slotColor(s.court);
     const sn=shortNm(s.court);
-    const mob=mobileNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const wx = weatherForSlotTime(ds, s.begin);
     const tipFull = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
@@ -1297,13 +1288,6 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e=>
     document.body.dataset.theme = e.matches ? 'dark' : 'light';
   }
 });
-function saveJson(){
-  const blob=new Blob([JSON.stringify(COURTS,null,2)],{type:'application/json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=`tennis_${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-}
 
 // 초기 UI 동기화
 syncUI();
