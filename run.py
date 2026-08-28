@@ -1278,20 +1278,10 @@ function buildSlots(slots,ds){
     const sn=shortNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const wx = weatherForSlotTime(ds, s.begin);
-    let tipFull = tip2;
-    let rainMark = '';
-    if(wx){
-      // 단기예보 범위(3일) — 해당 시간대 정확한 강수확률
-      tipFull = `${tip2}  💧${wx.pop ?? '-'}%`;
-      rainMark = wx.pop >= 70 ? ' ☔' : '';
-    } else {
-      // 중기예보 범위(4일~) — 시간대별 데이터는 없어서 하루 단위로 대체 표시
-      const dwx = weatherForDate(ds);
-      if(dwx){
-        tipFull = `${tip2}  (하루) 💧${dwx.pop}% 최고${dwx.tmax}°`;
-        rainMark = dwx.pop >= 70 ? ' ☔' : '';
-      }
-    }
+    // 단기예보 범위(오늘~+2일)일 때만 그 시간대 정확한 강수확률 표시
+    // — 중기예보 범위는 날짜 배지에 이미 같은 정보(하루 요약)가 있어서 팝업엔 중복으로 안 넣음
+    const tipFull = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
+    const rainMark = (wx && wx.pop >= 70) ? ' ☔' : '';
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
