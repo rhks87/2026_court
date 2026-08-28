@@ -494,6 +494,69 @@ def notify_new_slots(result, weather):
         json.dump(sorted(current), f, ensure_ascii=False)
 
 
+def _ultra_base_time(now):
+    """초단기실황/예보는 매시 30분에 발표되고 응답 안정화까지 시간이 걸려 45분 버퍼."""
+    t = now - timedelta(minutes=45)
+    return t.strftime("%Y%m%d"), t.strftime("%H") + "30"
+
+def fetch_ultra():
+    """
+    초단기실황(지금 이 순간 실제 관측값) + 초단기예보(몇 시간 이내 정밀 예보) 조회.
+    단기예보와 같은 격자좌표(KMA_NX/NY)를 그대로 사용 — 별도 지역코드 불필요.
+    반환된 슬롯의 tmp/sky/pty로 단기예보 값을 덮어써서 '지금·가까운 시간' 정확도를 높임.
+    강수확률(pop)은 이 API에 없는 필드라 단기예보 값을 그대로 유지.
+    실패해도 조용히 빈 dict 반환 — 단기예보 값이 그대로 살아있어 영향 없음.
+    """
+    if not KMA_SERVICE_KEY:
+        return {}
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    base_date, base_time = _ultra_base_time(now)
+    result = {}
+
+    try:  # 초단기실황 — 지금 이 순간의 실제 관측값 (기온, 강수형태)
+        r1 = requests.get(
+            "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst",
+            params={"serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 10,
+                    "dataType": "JSON", "base_date": base_date, "base_time": base_time,
+                    "nx": KMA_NX, "ny": KMA_NY}, timeout=10)
+        d1 = r1.json()
+        if d1["response"]["header"]["resultCode"] == "00":
+            ob = {}
+            for it in d1["response"]["body"]["items"]["item"]:
+                if it["category"] == "T1H":
+                    ob["tmp"] = it["obsrValue"]
+                elif it["category"] == "PTY":
+                    ob["pty"] = it["obsrValue"]
+            if ob:
+                key = f"{base_date}-{now.strftime('%H')}00"
+                result[key] = ob
+    except Exception as e:
+        print(f"  [!] 초단기실황 조회 실패: {e}")
+
+    try:  # 초단기예보 — 몇 시간 이내 정밀 예보 (기온/하늘상태/강수형태)
+        r2 = requests.get(
+            "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtFcst",
+            params={"serviceKey": KMA_SERVICE_KEY, "pageNo": 1, "numOfRows": 60,
+                    "dataType": "JSON", "base_date": base_date, "base_time": base_time,
+                    "nx": KMA_NX, "ny": KMA_NY}, timeout=10)
+        d2 = r2.json()
+        if d2["response"]["header"]["resultCode"] == "00":
+            for it in d2["response"]["body"]["items"]["item"]:
+                key = f'{it["fcstDate"]}-{it["fcstTime"]}'
+                result.setdefault(key, {})
+                if it["category"] == "T1H":
+                    result[key]["tmp"] = it["fcstValue"]
+                elif it["category"] == "SKY":
+                    result[key]["sky"] = it["fcstValue"]
+                elif it["category"] == "PTY":
+                    result[key]["pty"] = it["fcstValue"]
+    except Exception as e:
+        print(f"  [!] 초단기예보 조회 실패: {e}")
+
+    return result
+
+
 def main():
     with open("stadiums.json", encoding="utf-8") as f:
         stadiums = json.load(f)
@@ -584,6 +647,25 @@ def main():
                 print()
         else:
             print()
+
+        # 초단기실황/예보 — 최우선으로 tmp/sky/pty만 덮어씀 (pop은 단기예보 값 유지)
+        print(f"  [초단기] 동탄 조회 중...", end=" ")
+        try:
+            ultra = fetch_ultra()
+            if ultra:
+                overwritten = 0
+                for k, v in ultra.items():
+                    if k in weather["slots"]:
+                        weather["slots"][k].update(v)
+                        overwritten += 1
+                    else:
+                        weather["slots"][k] = v
+                print(f"{len(ultra)}개 시간대 반영 (기존 {overwritten}개 덮어씀)")
+            else:
+                print("생략")
+        except Exception as e:
+            print(f"실패: {e}")
+
         try:
             with open(WEATHER_CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(weather, f, ensure_ascii=False)
