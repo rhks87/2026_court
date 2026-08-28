@@ -340,7 +340,18 @@ def fetch_midterm():
 # ===== 텔레그램 신규 빈자리 알림 =====
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
-NOTIFY_HOURS = {18, 20}  # 알림 대상 시간대 — 대시보드 기본 필터(저녁)와 동일, 필요시 조정
+NOTIFY_RULES = [
+    # (요일 필터, 시간대 집합) — 요일 필터: None=매일, 또는 {5,6}처럼 특정 요일만 (월=0 ~ 일=6)
+    (None,     {18, 20}),  # 매일 저녁
+    ({5, 6},   {8}),       # 주말(토,일) 오전 8~10시 슬롯
+]
+
+def _hour_allowed(sdate, hour):
+    """해당 날짜(요일)·시간이 알림 대상인지 NOTIFY_RULES 기준으로 판단."""
+    for days, hours in NOTIFY_RULES:
+        if hour in hours and (days is None or sdate.weekday() in days):
+            return True
+    return False
 HSCITY_OPEN_DAY, HSCITY_OPEN_HOUR = 27, 10  # 화성 예약시스템: 매월 27일 10:00에 '다음달' 오픈
 OSAN_OPEN_DAY,   OSAN_OPEN_HOUR   = 26, 20  # 오산 예약시스템: 매월 26일 20:00에 '다음달' 오픈
 QUIET_START_HOUR, QUIET_END_HOUR  = 23, 7   # 23시~07시(다음날)는 발송 보류, 아침에 모아서 전송
@@ -410,7 +421,7 @@ def notify_new_slots(result, weather):
                 sdate = datetime.strptime(s["date"], "%Y-%m-%d").date()
             except Exception:
                 continue
-            if hour not in NOTIFY_HOURS:
+            if not _hour_allowed(sdate, hour):
                 continue
             if today <= sdate <= cur_month_end:
                 pass  # 이번달: 항상 허용
@@ -1278,16 +1289,21 @@ function buildSlots(slots,ds){
     const sn=shortNm(s.court);
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const wx = weatherForSlotTime(ds, s.begin);
-    // 단기예보 범위(오늘~+2일)일 때만 그 시간대 정확한 강수확률 표시
-    // — 중기예보 범위는 날짜 배지에 이미 같은 정보(하루 요약)가 있어서 팝업엔 중복으로 안 넣음
-    const tipFull = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
+    // PC 호버 툴팁: 짧게 — 단기예보 범위일 때만 그 시간대 강수확률 (중기예보는 배지에 이미 있어 생략)
+    const hoverTxt = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
+    // 모바일 팝업(data-tip): 모바일 배지는 아이콘만 있어서, 중기예보 범위엔 하루 요약을 대신 보여줌
+    let tapTxt = hoverTxt;
+    if(!wx){
+      const dwx = weatherForDate(ds);
+      if(dwx) tapTxt = `${tip2}  💧${dwx.pop}% 최고${dwx.tmax}°`;
+    }
     const rainMark = (wx && wx.pop >= 70) ? ' ☔' : '';
     const hOnly=s.begin.split(':')[0];  // "18:00" → "18"
     h+=`<a class="slot" href="${s.court.url}" target="_blank"
       style="background:${col}"
-      data-url="${s.court.url}" data-tip="${tipFull.replace(/"/g,'&quot;')}"
+      data-url="${s.court.url}" data-tip="${tapTxt.replace(/"/g,'&quot;')}"
       onclick="return handleSlotClick(event,this)"
-      onmouseenter="showTip(event,'${tipFull.replace(/'/g,"\\'")}' )"
+      onmouseenter="showTip(event,'${hoverTxt.replace(/'/g,"\\'")}' )"
       onmouseleave="hideTip()"
     ><span class='t'><span class='sn-tf'>${s.begin}</span><span class='sn-s'>${parseInt(hOnly)}시</span></span> <span class='sn-f'>${sn}</span>${rainMark}</a>`;
   });
