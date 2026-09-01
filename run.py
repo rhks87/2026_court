@@ -1372,7 +1372,7 @@ function buildSlots(slots,ds){
     const tip2=`${s.court.name}  ${s.begin}~${s.end}`;
     const wx = weatherForSlotTime(ds, s.begin);
     // PC 호버 툴팁: 짧게 — 단기예보 범위일 때만 그 시간대 강수확률 (중기예보는 배지에 이미 있어 생략)
-    const hoverTxt = wx ? `${tip2}  💧${wx.pop ?? '-'}%` : tip2;
+    const hoverTxt = wx ? `${tip2}  💧${wx.pop ?? '-'}% ${wx.tmp ?? '-'}°` : tip2;
     // 모바일 팝업(data-tip): 모바일 배지는 아이콘만 있어서, 중기예보 범위엔 하루 요약을 대신 보여줌
     let tapTxt = hoverTxt;
     if(!wx){
