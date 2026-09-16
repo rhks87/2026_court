@@ -343,7 +343,7 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 NOTIFY_RULES = [
     # (요일 필터, 시간대 집합) — 요일 필터: None=매일, 또는 {5,6}처럼 특정 요일만 (월=0 ~ 일=6)
     (None,     {18, 20}),  # 매일 저녁
-    ({5, 6},   {8}),       # 주말(토,일) 오전 8~10시 슬롯
+    ({5, 6},   {8, 10}),   # 주말(토,일) 오전 8~10시, 10~12시 슬롯
 ]
 
 def _hour_allowed(sdate, hour):
