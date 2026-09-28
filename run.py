@@ -1011,6 +1011,12 @@ td.today .dnum{background:var(--today-ring);color:#fff;border-radius:50%;
 td.holiday-bg{background:rgba(239,68,68,.07)!important}
 [data-theme=dark] td.holiday-bg{background:rgba(248,113,113,.1)!important}
 
+/* 주말 배경 — 공휴일은 아니지만 평일과는 구분되게 (일=빨강 계열, 토=파랑 계열) */
+td.wknd-sun{background:rgba(239,68,68,.045)!important}
+td.wknd-sat{background:rgba(59,130,246,.05)!important}
+[data-theme=dark] td.wknd-sun{background:rgba(248,113,113,.06)!important}
+[data-theme=dark] td.wknd-sat{background:rgba(96,165,250,.07)!important}
+
 .day-wx{position:absolute;top:2px;right:3px;font-size:10px;font-weight:700;
   color:var(--muted);white-space:nowrap;line-height:1;cursor:pointer}
 td{position:relative}
@@ -1368,7 +1374,7 @@ const HOLI={
   '2026-07-17':'제헌절',
   '2026-08-15':'광복절(토)','2026-08-17':'광복절 대체',
   '2026-09-24':'추석 연휴','2026-09-25':'추석','2026-09-26':'추석 연휴(토)',
-  '2026-10-03':'개천절(토)',
+  '2026-10-03':'개천절(토)','2026-10-05':'개천절 대체',
   '2026-10-09':'한글날',
   '2026-12-25':'성탄절',
 };
@@ -1565,7 +1571,9 @@ function render(){
         const dc=dw===0?'sun':dw===6?'sat':'';
         let cls=''; if(isPast)cls='past'; if(isToday)cls='today';
         const holi=HOLI[ds]||'';
-        html+=`<td class="${cls}${holi?' holiday-bg':''}">`;
+        // 공휴일 배경이 우선 — 공휴일이 아닌 주말만 별도 배경(일요일/토요일 다른 색)
+        const wknd = !holi && dc ? ` wknd-${dc}` : '';
+        html+=`<td class="${cls}${holi?' holiday-bg':''}${wknd}">`;
         const wx = weatherForDate(ds);
         if(wx){
           const icon = wx.wf ? wfIcon(wx.wf) : skyIcon(wx.sky, wx.pty);
