@@ -8,7 +8,7 @@
   - 텔레그램 신규 빈자리 알림 (오픈 시각 반영, 조용한 시간대 보류, 코트별 그룹핑, 날씨 첨부)
   - 모바일 2단계 탭(예약 이동 전 상세 확인)
 """
-import requests, json, time, os, calendar
+import requests, json, time, os, calendar, re, math
 from datetime import datetime, timezone, timedelta, date
 
 API_URL  = "https://yeyak.hscity.go.kr/stadium/stadiumReserveUseList.do"
@@ -355,6 +355,106 @@ def _hour_allowed(sdate, hour):
 HSCITY_OPEN_DAY, HSCITY_OPEN_HOUR = 27, 10  # 화성 예약시스템: 매월 27일 10:00에 '다음달' 오픈
 OSAN_OPEN_DAY,   OSAN_OPEN_HOUR   = 26, 20  # 오산 예약시스템: 매월 26일 20:00에 '다음달' 오픈
 QUIET_START_HOUR, QUIET_END_HOUR  = 23, 7   # 23시~07시(다음날)는 발송 보류, 아침에 모아서 전송
+
+# ── 조명 없는 코트: 일몰 후 사용 불가 ──────────────────────
+# (그룹명, 코트번호) 형태로 등록. 코트번호는 코트명에서 "N번" 패턴으로 자동 추출.
+NO_LIGHT_COURTS = {
+    ("금반저류지", "2"),  # 금반저류지 2번 — 라이트 없음
+}
+DARK_MIN_DAYLIGHT_MINUTES = 90  # 슬롯 안에서 밝은 시간이 이 값(분) 미만이면 숨김
+DONGTAN_LAT, DONGTAN_LON = 37.19, 127.07  # 동탄 대략 좌표 (일몰 계산용)
+
+def get_sunset_kst(d):
+    """주어진 날짜(date 객체)의 동탄 기준 일몰 시각(KST datetime)을 계산.
+    외부 API 의존 없이 표준 Sunrise/Sunset Algorithm(Julian day 기반 근사식) 사용,
+    KMA API 불안정성을 피하기 위해 순수 계산으로 처리."""
+    lat, lon = DONGTAN_LAT, DONGTAN_LON
+    n = d.timetuple().tm_yday
+    lng_hour = lon / 15
+    t = n + ((18 - lng_hour) / 24)  # 일몰 기준 근사 시각(18시)
+    M = (0.9856 * t) - 3.289
+    L = M + (1.916 * math.sin(math.radians(M))) + (0.020 * math.sin(math.radians(2 * M))) + 282.634
+    L = L % 360
+    RA = math.degrees(math.atan(0.91764 * math.tan(math.radians(L))))
+    RA = RA % 360
+    Lquadrant = math.floor(L / 90) * 90
+    RAquadrant = math.floor(RA / 90) * 90
+    RA = (RA + (Lquadrant - RAquadrant)) / 15
+    sinDec = 0.39782 * math.sin(math.radians(L))
+    cosDec = math.cos(math.asin(sinDec))
+    zenith = 90.833  # 대기굴절 + 태양반지름 보정 포함한 공식 일몰 기준각
+    denom = cosDec * math.cos(math.radians(lat))
+    if denom == 0:
+        return None
+    cosH = (math.cos(math.radians(zenith)) - (sinDec * math.sin(math.radians(lat)))) / denom
+    if cosH > 1 or cosH < -1:
+        return None  # 해당 위도에서 해가 지지 않거나 뜨지 않는 극단적 경우(동탄엔 해당 없음)
+    H = math.degrees(math.acos(cosH)) / 15
+    T = H + RA - (0.06571 * t) - 6.622
+    UT = T - lng_hour
+    UT = UT % 24
+    hour = int(UT)
+    minute = int(round((UT - hour) * 60))
+    if minute == 60:
+        minute = 0
+        hour = (hour + 1) % 24
+    utc_dt = datetime(d.year, d.month, d.day, hour, minute, tzinfo=timezone.utc)
+    return utc_dt.astimezone(timezone(timedelta(hours=9)))
+
+def _court_no_from_name(name):
+    m = re.search(r'(\d+)\s*번', name or "")
+    return m.group(1) if m else None
+
+def filter_dark_slots(result):
+    """NO_LIGHT_COURTS에 등록된 조명 없는 코트에서, 일몰까지 밝은 시간이
+    DARK_MIN_DAYLIGHT_MINUTES(기본 1시간) 미만인 슬롯을 예약현황·알림 대상에서 제외."""
+    if not NO_LIGHT_COURTS:
+        return
+    sunset_cache = {}
+    removed = 0
+    for court in result:
+        key = (court.get("group", ""), _court_no_from_name(court.get("name", "")))
+        if key not in NO_LIGHT_COURTS:
+            continue
+        kept = []
+        for s in court.get("empty_slots", []):
+            try:
+                y, mo, da = map(int, s["date"].split("-"))
+                bh, bm = map(int, s["begin"].split(":"))
+                eh, em = map(int, s["end"].split(":"))
+            except Exception:
+                kept.append(s)
+                continue
+            d = date(y, mo, da)
+            if d not in sunset_cache:
+                sunset_cache[d] = get_sunset_kst(d)
+            sunset = sunset_cache[d]
+            if sunset is None:
+                kept.append(s)
+                continue
+            begin_dt = datetime(y, mo, da, bh, bm, tzinfo=sunset.tzinfo)
+            end_dt = datetime(y, mo, da, eh, em, tzinfo=sunset.tzinfo)
+            if end_dt <= begin_dt:
+                end_dt += timedelta(days=1)
+            daylight_minutes = (min(end_dt, sunset) - begin_dt).total_seconds() / 60
+            if daylight_minutes < DARK_MIN_DAYLIGHT_MINUTES:
+                removed += 1
+                continue
+            kept.append(s)
+        court["empty_slots"] = kept
+    if removed:
+        print(f"  [조명] 무등 코트 일몰 후 슬롯 {removed}개 숨김")
+
+def no_light_notices():
+    """NO_LIGHT_COURTS 설정을 기반으로 화면에 표시할 안내 문구 목록 생성.
+    코트가 추가/변경되면 이 문구도 자동으로 맞춰짐 (하드코딩 없음)."""
+    notices = []
+    for group, no in sorted(NO_LIGHT_COURTS):
+        notices.append(
+            f"{group} {no}번 코트는 조명이 없어, 일몰까지 밝은 시간이 "
+            f"{DARK_MIN_DAYLIGHT_MINUTES}분 미만으로 남는 시간대는 예약현황에서 숨김 처리됩니다."
+        )
+    return notices
 PREV_STATE_FILE = "previous_slots.json"
 PENDING_FILE    = "pending_notify.json"
 
@@ -616,6 +716,11 @@ def main():
             osan_total += len(slots)
     print(f"빈자리 {osan_total:>3d}개")
 
+    # 조명 없는 코트(금반저류지 2번 등): 일몰 후(밝은 시간 1시간 미만) 슬롯은
+    # 예약현황·알림 모두에서 숨김 — result 전체에 한 번만 적용하면 이후 단계
+    # (index.html 렌더링, notify_new_slots)에 자동으로 반영됨
+    filter_dark_slots(result)
+
     # 날씨 (동탄 기준, 실패해도 코트 정보는 정상 생성)
     print(f"  [날씨] 동탄 단기예보 조회 중...", end=" ")
     weather = fetch_weather()
@@ -775,6 +880,7 @@ def main():
     html = (HTML
             .replace("__DATA__",  json.dumps(result, ensure_ascii=False))
             .replace("__WEATHER__", json.dumps(weather, ensure_ascii=False))
+            .replace("__NOLIGHT__", json.dumps(no_light_notices(), ensure_ascii=False))
             .replace("__TIME__",  ts)
             .replace("__YEAR__",  str(months[0][0]))
             .replace("__MONTH__", str(months[0][1])))
@@ -949,6 +1055,10 @@ td{position:relative}
   border-radius:10px;padding:10px 14px;margin-top:12px;font-size:13px;
   font-weight:700;display:flex;align-items:center;gap:8px}
 [data-theme=dark] .warn-banner{background:#3f1d1d;border-color:#7f1d1d;color:#fca5a5}
+.info-banner{background:#eff6ff;border:1px solid #93c5fd;color:#1d4ed8;
+  border-radius:10px;padding:10px 14px;margin-top:8px;font-size:12px;
+  font-weight:600;display:flex;align-items:center;gap:8px}
+[data-theme=dark] .info-banner{background:#1e293b;border-color:#3b82f6;color:#93c5fd}
 .wcard{flex:1;min-width:90px;background:var(--card);border:1px solid var(--border);
   border-radius:12px;padding:10px 8px;text-align:center;box-shadow:var(--shadow);cursor:pointer}
 .wcard.sel{box-shadow:0 0 0 2px var(--accent)}
@@ -1086,11 +1196,13 @@ td{position:relative}
 <div class="weather-wrap" id="weatherWrap"></div>
 <div class="weather-hourly" id="weatherHourly" style="display:none"></div>
 <div id="warnBanner"></div>
+<div id="noLightBanner"></div>
 
 
 <script>
 const COURTS = __DATA__;
 const WEATHER = __WEATHER__;
+const NOLIGHT = __NOLIGHT__;
 const T0 = new Date(); T0.setHours(0,0,0,0);
 
 /* 날씨 요약 카드 렌더 */
@@ -1125,6 +1237,14 @@ function renderWarnings(){
   if(list.length === 0){ el.innerHTML = ''; return; }
   const titles = list.map(w => w.title).join(' · ');
   el.innerHTML = `<div class="warn-banner">⚠️ 기상특보(경기도): ${titles}</div>`;
+}
+
+/* 무등(조명 없음) 코트 안내 배너 — NO_LIGHT_COURTS 설정이 있을 때만 표시 */
+function renderNoLight(){
+  const el = document.getElementById('noLightBanner');
+  if(!el) return;
+  if(!NOLIGHT || NOLIGHT.length === 0){ el.innerHTML = ''; return; }
+  el.innerHTML = NOLIGHT.map(t => `<div class="info-banner">💡 ${t}</div>`).join('');
 }
 
 let expandedWDay;  // undefined = 아직 초기화 안 됨 (최초 1회만 "오늘"로 기본 오픈)
@@ -1529,6 +1649,7 @@ syncUI();
 render();
 renderWeather();
 renderWarnings();
+renderNoLight();
 
 // 시간대별 하이라이트가 실제 시간 흐름에 맞게 유지되도록 5분마다 재계산
 // (페이지를 계속 열어둔 채 안 새로고침해도 '지금' 표시가 stale해지지 않음)
